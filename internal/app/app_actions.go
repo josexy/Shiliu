@@ -12,31 +12,51 @@ import (
 // addDownloads parses the pasted links and queues them.
 func (a *app) addDownloads() {
 	raw := strings.TrimSpace(a.input)
-	if raw == "" {
+	if raw == "" || a.addBusy || a.stopping {
 		return
 	}
-	added, skipped, invalid := a.engine.Add(raw)
-	if added > 0 {
-		a.toast(fmt.Sprintf("已添加 %d 个下载", added))
-	}
-	if skipped > 0 {
-		a.toast(fmt.Sprintf("跳过 %d 个重复链接", skipped))
-	}
-	if len(invalid) > 0 {
-		shown := invalid
-		if len(shown) > 3 {
-			shown = shown[:3]
+	a.addBusy = true
+	ctx, engine := a.lifetime, a.engine
+	a.backgroundJobs.Add(1)
+	a.deps.async(func() {
+		defer a.backgroundJobs.Done()
+		added, skipped := 0, 0
+		var pending, errors []string
+		for i, token := range download.URLTokens(raw) {
+			if ctx.Err() != nil {
+				break
+			}
+			if valid, _ := download.NormalizeURLs(token); len(valid) != 1 {
+				pending = append(pending, token)
+				errors = append(errors, "无法识别："+download.DiagnosticText(token))
+				continue
+			}
+			n, duplicates, err := engine.AddContext(ctx, token)
+			added += n
+			skipped += duplicates
+			if err != nil {
+				pending = append(pending, token)
+				errors = append(errors, fmt.Sprintf("第 %d 项：%s", i+1, download.DiagnosticText(err.Error())))
+			}
 		}
-		a.inputErr = "无法识别：" + strings.Join(shown, "、")
-		if len(invalid) > 3 {
-			a.inputErr += fmt.Sprintf(" 等 %d 个链接", len(invalid))
-		}
-		a.input = strings.Join(invalid, "\n")
-	} else {
-		a.input = ""
-		a.inputErr = ""
-	}
-	a.dirty.Store(true)
+		a.dispatch(func() {
+			a.addBusy = false
+			if a.stopping {
+				return
+			}
+			if added > 0 {
+				a.toast(fmt.Sprintf("已添加 %d 个下载", added))
+			}
+			if skipped > 0 {
+				a.toast(fmt.Sprintf("跳过 %d 个重复链接", skipped))
+			}
+			if strings.TrimSpace(a.input) == raw {
+				a.input = strings.Join(pending, "\n")
+				a.inputErr = strings.Join(errors[:min(3, len(errors))], "；")
+			}
+			a.dirty.Store(true)
+		})
+	})
 }
 
 // pasteClipboard appends the clipboard's links to the input.
@@ -123,12 +143,14 @@ func (a *app) revealDownloadDir() {
 
 // copyURL puts a download's link on the clipboard.
 func (a *app) copyURL(c *ui.Context, it download.Item) {
+	a.suppressClipboardCopy(it.URL)
 	c.WriteClipboard(it.URL)
 	a.toast("已复制链接")
 }
 
 // copyPath puts a download's path on the clipboard.
 func (a *app) copyPath(c *ui.Context, it download.Item) {
+	a.suppressClipboardCopy(it.Path)
 	c.WriteClipboard(it.Path)
 	a.toast("已复制保存路径")
 }

@@ -37,6 +37,12 @@ type Item struct {
 	FileName   string
 	Path       string
 	State      State
+	// QueuePosition is one-based among waiting tasks; zero means not movable.
+	QueuePosition   int
+	QueueLength     int
+	Schedule        Schedule
+	ManualPaused    bool
+	ScheduleWaiting string
 	// Total is the size in bytes, or -1 when the server does not say.
 	Total int64
 	Done  int64
@@ -105,6 +111,9 @@ type Summary struct {
 
 // Record is how a download is saved and restored.
 type Record struct {
+	Schedule         Schedule           `json:"schedule,omitzero"`
+	ManualPaused     bool               `json:"manualPaused,omitempty"`
+	QueueOrder       int64              `json:"queueOrder,omitempty"`
 	ID               string             `json:"id"`
 	URL              string             `json:"url"`
 	FileName         string             `json:"fileName"`

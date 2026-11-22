@@ -54,6 +54,8 @@ func (a *app) view(c *ui.Context) {
 	a.detailsModal(c, items)
 	a.taskListModal(c)
 	a.sourceModal(c)
+	a.scheduleModal(c)
+	a.rulesModal(c)
 }
 
 // shortcuts handles the window's keys.
@@ -64,7 +66,7 @@ func (a *app) shortcuts(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyF) {
 		a.focusSearch = true
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyEnter) && strings.TrimSpace(a.input) != "" && !a.settingsOpen && !a.advanced.open && !a.detailsOpen && !a.confirm.open && !a.taskList.open && !a.source.open {
+	if c.Shortcut(ui.Cmd, ui.KeyEnter) && strings.TrimSpace(a.input) != "" && !a.settingsOpen && !a.advanced.open && !a.detailsOpen && !a.confirm.open && !a.taskList.open && !a.source.open && !a.scheduleEditor.open {
 		a.addDownloads()
 	}
 }
@@ -273,6 +275,7 @@ func (a *app) content(c *ui.Context, summary download.Summary) {
 	p := a.palette
 	ui.Column(c).Grow(1).FillHeight().Background(p.Canvas).Padding(22, 24).Gap(18).Children(func() {
 		a.addCard(c)
+		a.clipboardPrompt(c)
 		a.toolbar(c, summary)
 		ui.Box(c).Grow(1).FillWidth().Children(func() {
 			if len(a.visible) == 0 {

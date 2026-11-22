@@ -16,6 +16,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"go-downloader/internal/diagnostics"
 	"go-downloader/internal/download"
 	"go-downloader/internal/proxy"
 	"go-downloader/internal/settings"
@@ -46,6 +47,10 @@ type downloader interface {
 	Pause(id string)
 	Resume(id string)
 	Retry(id string)
+	MoveQueue(string, download.QueueMove) error
+	SetSchedule(string, download.Schedule) error
+	SetDirectoryRules([]settings.DirectoryRule) error
+	StartScheduling()
 	Remove(id string, deleteFile bool)
 	RemoveMany(ids []string, deleteFiles bool)
 	PauseAll()
@@ -64,6 +69,7 @@ type downloader interface {
 	CancelVerification(string)
 	RefreshFiles()
 	Snapshot() ([]download.Item, download.Summary)
+	History(string) []download.SpeedSample
 	Records() []download.Record
 	AcknowledgeSources([]download.Record) error
 	Restore([]download.Record)
@@ -74,10 +80,12 @@ type downloader interface {
 
 // app is the window's state and its view's data.
 type app struct {
-	deps   deps
-	store  *store.Store
-	engine downloader
-	win    *mygo.Window
+	diagnostics      *diagnostics.Buffer
+	diagnosticExport diagnosticExportState
+	deps             deps
+	store            *store.Store
+	engine           downloader
+	win              *mygo.Window
 
 	s       settings.Settings
 	palette palette
@@ -102,6 +110,14 @@ type app struct {
 
 	// View state.
 	input                 string
+	clipboard             clipboardState
+	addBusy               bool
+	dropSeen              bool
+	dropBatchID           uint64
+	quickInput            ui.Handle
+	restoreQuickInput     bool
+	focusQuickInput       bool
+	ruleEditor            ruleEditorState
 	inputErr              string
 	query                 string
 	filter                string
@@ -131,6 +147,7 @@ type app struct {
 	cancelLifetime        context.CancelFunc
 	backgroundJobs        sync.WaitGroup
 	detailsID             string
+	scheduleEditor        scheduleEditorState
 	detailsOpen           bool
 	detailsRate           string
 	detailsRateErr        string
@@ -175,7 +192,8 @@ type confirmState struct {
 func newApp(d deps) *app {
 	lifetime, cancel := context.WithCancel(context.Background())
 	a := &app{
-		lifetime: lifetime, cancelLifetime: cancel,
+		diagnostics: &diagnostics.Buffer{},
+		lifetime:    lifetime, cancelLifetime: cancel,
 		deps:      d,
 		filter:    filterAll,
 		proxyPort: 7890,
@@ -222,10 +240,13 @@ func (a *app) load() {
 		a.toast(err.Error())
 	}
 	a.engine = download.New(download.Options{
-		Dir:            a.s.DownloadDir,
-		AppVersion:     a.deps.version,
-		MaxConcurrent:  a.s.MaxConcurrent,
-		MaxConnections: a.s.MaxConnections, DefaultConnections: a.s.TaskConnections,
+		Diagnostics:     a.diagnostics,
+		DeferScheduling: true,
+		DirectoryRules:  a.s.DirectoryRules,
+		Dir:             a.s.DownloadDir,
+		AppVersion:      a.deps.version,
+		MaxConcurrent:   a.s.MaxConcurrent,
+		MaxConnections:  a.s.MaxConnections, DefaultConnections: a.s.TaskConnections,
 		AutoStart:     a.s.AutoStart,
 		RateLimit:     a.s.RateLimit,
 		ClientFactory: a.clientSnapshot,
@@ -274,12 +295,16 @@ func (a *app) start() {
 	a.engine.SetOnChange(a.onEngineChange)
 	a.engine.SetOnComplete(a.onEngineComplete)
 	a.startSaver()
+	a.engine.StartScheduling()
+	a.syncClipboard()
 }
 
 // shutdown pauses the downloads and saves everything before the app quits.
 func (a *app) shutdown() {
 	a.shrunk.Do(func() {
 		a.stopping = true
+		a.cancelDiagnosticExport()
+		a.stopClipboard()
 		if a.cancelLifetime != nil {
 			a.cancelLifetime()
 		}
@@ -420,8 +445,9 @@ func (a *app) clientSnapshot() (*http.Client, error) {
 func (a *app) rebuildClient() {
 	cfg := a.s.Proxy
 	cfg.Normalize()
-	client, err := proxy.NewClient(cfg, a.system)
+	client, err := proxy.NewClientWithDiagnostics(cfg, a.system, a.diagnostics)
 	if err != nil {
+		a.diagnostics.Record(diagnostics.NewEvent(diagnostics.ProxyFailure, "", "", 0, 0, err))
 		a.proxyErr = err.Error()
 		return
 	}
@@ -493,6 +519,7 @@ func defaultDownloadDir() string {
 }
 
 // computeVisible filters and sorts the downloads for the list or the grid.
+// Its copied order is presentation only; the engine owns queue priority.
 func (a *app) computeVisible(items []download.Item) []download.Item {
 	out := make([]download.Item, 0, len(items))
 	query := strings.ToLower(strings.TrimSpace(a.query))

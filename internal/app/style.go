@@ -21,6 +21,8 @@ type palette struct {
 	Border    ui.Color
 	Divider   ui.Color
 	Track     ui.Color
+	Curve     ui.Color
+	CurveGrid ui.Color
 
 	Text  ui.Color
 	Muted ui.Color
@@ -58,6 +60,8 @@ func paletteFor(dark bool) palette {
 			Border:        ui.Hex("#364459"),
 			Divider:       ui.Hex("#2B3749"),
 			Track:         ui.Hex("#334157"),
+			Curve:         ui.Hex("#94B5FF"),
+			CurveGrid:     ui.Hex("#364459"),
 			Text:          ui.Hex("#E8EDF5"),
 			Muted:         ui.Hex("#A2B0C5"),
 			Accent:        ui.Hex("#94B5FF"),
@@ -86,6 +90,8 @@ func paletteFor(dark bool) palette {
 		Border:        ui.Hex("#DCE3ED"),
 		Divider:       ui.Hex("#EAF0F6"),
 		Track:         ui.Hex("#E5EAF2"),
+		Curve:         ui.Hex("#315DCE"),
+		CurveGrid:     ui.Hex("#DCE3ED"),
 		Text:          ui.Hex("#1D2A3D"),
 		Muted:         ui.Hex("#617089"),
 		Accent:        ui.Hex("#315DCE"),
@@ -236,6 +242,9 @@ func statusColors(p palette, it download.Item) (fg, bg ui.Color) {
 
 func statusBadge(c *ui.Context, p palette, it download.Item) ui.Element {
 	text := stateLabel(it.State)
+	if it.QueuePosition > 0 {
+		text = "排队 " + numberLabel(it.QueuePosition)
+	}
 	fg, bg := statusColors(p, it)
 	if it.Missing {
 		text = "文件缺失"

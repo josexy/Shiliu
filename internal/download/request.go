@@ -3,6 +3,7 @@ package download
 import (
 	"encoding/base64"
 	"fmt"
+	"go-downloader/internal/rules"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,8 +19,11 @@ import (
 // AddOptions configures one advanced download. Headers stay in memory and are
 // never included in Item, Record, or partial-file metadata.
 type AddOptions struct {
+	// Nil preserves an existing task's schedule when only refreshing headers.
+	Schedule        *Schedule
 	URL             string
 	Dir             string
+	DirOverride     bool // Dir is used only when explicitly selected by the caller.
 	FileName        string
 	Headers         http.Header
 	TaskRateLimit   int64
@@ -76,6 +80,11 @@ func validateHeaders(input http.Header) (http.Header, error) {
 // credentials to the same stopped task without discarding its partial data.
 // Directory checks perform I/O, so callers should run this off the UI thread.
 func (m *Manager) AddTask(opts AddOptions) (string, error) {
+	if opts.Schedule != nil {
+		if err := opts.Schedule.Validate(); err != nil {
+			return "", err
+		}
+	}
 	if opts.ConnectionLimit != 0 {
 		if err := validateConnections(opts.ConnectionLimit, 8); err != nil {
 			return "", err
@@ -107,11 +116,27 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 		u, _ := url.Parse(target.url)
 		name = NameFromURL(u)
 	}
-	dir := strings.TrimSpace(opts.Dir)
-	if dir == "" {
-		m.mu.Lock()
-		dir = m.dir
-		m.mu.Unlock()
+	// Resolve from an immutable rule snapshot outside the lock. Existing tasks
+	// keep their reserved directory when credentials or rules change.
+	m.mu.Lock()
+	dir, directoryRules := m.dir, m.directoryRules
+	existing := false
+	for _, t := range m.tasks {
+		if t.item.URL == target.display && (t.item.State != StateCompleted || t.item.Missing) {
+			dir, existing = filepath.Dir(t.item.Path), true
+			break
+		}
+	}
+	m.mu.Unlock()
+	if !existing {
+		override := ""
+		if opts.DirOverride {
+			override = strings.TrimSpace(opts.Dir)
+			if override == "" {
+				return "", fmt.Errorf("自定义保存目录不能为空")
+			}
+		}
+		dir, _ = rules.Select(directoryRules, target.url, name, dir, override)
 	}
 	dir, err = writableDirectory(dir)
 	if err != nil {
@@ -152,6 +177,7 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 		path := uniquePath(dir, name, m.reserved)
 		reservePath(m.reserved, path)
 		selected = &task{
+			queueOrder: m.nextQueueOrderLocked(),
 			item: Item{ID: newID(), URL: target.display, DisplayURL: target.display,
 				FileName: filepath.Base(path), Path: path, Total: -1, CreatedAt: timeNow()},
 			user: target.user, pass: target.pass, headers: headers, customName: customName,
@@ -159,7 +185,7 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 		m.tasks = append(m.tasks, selected)
 		m.byID[selected.item.ID] = selected
 	}
-	selected.item.State = StatePaused
+	m.setStateLocked(selected, StatePaused)
 	if opts.ConnectionLimit != 0 {
 		selected.item.ConnectionLimit = opts.ConnectionLimit
 	} else if selected.item.ConnectionLimit == 0 {
@@ -169,7 +195,11 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 	selected.bandwidth.set(opts.TaskRateLimit)
 	resetVerificationLocked(selected, expected)
 	if m.auto {
-		selected.item.State = StateQueued
+		m.setStateLocked(selected, StateQueued)
+	}
+	selected.item.ManualPaused = !m.auto
+	if opts.Schedule != nil {
+		m.setScheduleLocked(selected, *opts.Schedule)
 	}
 	id := selected.item.ID
 	m.mu.Unlock()

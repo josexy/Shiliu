@@ -10,6 +10,7 @@ import (
 
 	"github.com/egoist/mygo"
 
+	"go-downloader/internal/diagnostics"
 	"go-downloader/internal/proxy"
 	"go-downloader/internal/settings"
 )
@@ -380,6 +381,9 @@ func (a *app) runProxyTest() {
 		ctx, cancel := context.WithTimeout(lifetime, 20*time.Second)
 		defer cancel()
 		elapsed, err := a.deps.testProxy(ctx, cfg, sys, proxyTestURL)
+		if err != nil {
+			a.diagnostics.Record(diagnostics.NewEvent(diagnostics.ProxyFailure, "", proxyTestURL, 0, 0, err))
+		}
 		if lifetime.Err() != nil {
 			return
 		}

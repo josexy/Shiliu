@@ -20,6 +20,8 @@ Settings 目前只有 DownloadDir；AddTask 的 Dir 为空才用默认值，adva
 
 settings 增加有序 DirectoryRules：ID、Enabled、Kind、Pattern、Dir。确定规则模型和规范化放 internal/settings，纯匹配放新增 internal/download/directory_rules.go 或独立 internal/rules；本规划选 internal/rules，使 settings/download 均不依赖 app 或 mygo。
 
+实现时 settings 保留 DirectoryRule 类型别名和规范化入口，共享模型及校验细节置于 internal/rules；引擎只依赖 rules，避免经 settings 引入 proxy 而与现有代理集成测试形成循环依赖。持久格式和上述职责不变。
+
 ### 2. 核心执行方式
 
 匹配用创建时 custom filename（若有）否则 URL 推断名的最后后缀；扩展名统一小写并去前导点。域名用 url.Hostname，IDNA 通过现有 x/net/idna 规范化，小写、去末尾点；*.domain 使用标签边界且不含根域名。拒绝路径、端口和任意正则模式。

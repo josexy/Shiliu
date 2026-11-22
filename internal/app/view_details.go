@@ -71,6 +71,9 @@ func (a *app) detailsModal(c *ui.Context, items []download.Item) {
 				ui.Scroll(c).Height(min(450, max(180, height-230))).Gap(12).Children(func() {
 					ui.Text(c, item.FileName).FontSize(16).Bold().Selectable()
 					ui.Text(c, connectionStatus(item)).FontSize(12).TextColor(p.Muted)
+					if item.State == download.StateQueued {
+						a.queueControls(c, item)
+					}
 					progressBar(c, p, item)
 					ui.Field(c, "任务限速（KB/s，0 表示不另设上限）", func() {
 						ui.Row(c).Gap(8).Children(func() {
@@ -84,6 +87,7 @@ func (a *app) detailsModal(c *ui.Context, items []download.Item) {
 					}
 					a.verificationControls(c, item)
 					a.taskConnectionControls(c, item)
+					a.speedHistorySection(c, item)
 					for _, field := range taskDetailFields(item, a.now) {
 						ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
 							ui.Text(c, field.label).Width(100).Shrink(0).FontSize(13).TextColor(p.Muted)
@@ -101,8 +105,11 @@ func (a *app) detailsModal(c *ui.Context, items []download.Item) {
 			ui.Divider(c).Background(p.Divider)
 			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
 				ui.Button(c, "更新下载链接…").Disabled(!found || !sourceEditable(item)).OnClick(func() { a.openSource(item.ID) })
+				ui.Button(c, "下载计划…").Disabled(!found).OnClick(func() { a.openSchedule(item) })
 				ui.Button(c, "复制诊断信息").Disabled(!found).OnClick(func() {
-					services.WriteClipboard(taskDiagnostic(item, a.now))
+					text := taskDiagnostic(item, a.now)
+					a.suppressClipboardCopy(text)
+					services.WriteClipboard(text)
 					a.toast("已复制诊断信息")
 				})
 				ui.PrimaryButton(c, "关闭").OnClick(func() { a.detailsOpen = false })
@@ -153,6 +160,7 @@ func taskDetailFields(it download.Item, now time.Time) []detailField {
 		duration = max(time.Duration(0), end.Sub(it.CreatedAt)).Round(time.Second).String()
 	}
 	return []detailField{
+		{"下载计划", scheduleStatus(it)},
 		{"连接模式", connectionStatus(it)}, {"回退说明", it.FallbackReason},
 		{"任务限速", taskRateLabel(it.TaskRateLimit)},
 		{"状态", state}, {"下载来源", download.DiagnosticURL(it.URL)}, {"保存路径", it.Path},

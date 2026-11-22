@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"github.com/egoist/mygo/ui"
 
 	"go-downloader/internal/proxy"
@@ -62,7 +63,7 @@ func (a *app) settingsContentHeight(windowHeight float32) float32 {
 	case 2:
 		return min(152, limit)
 	case 3:
-		return min(190, limit)
+		return min(300, limit)
 	default:
 		return min(412, limit)
 	}
@@ -119,6 +120,7 @@ func (a *app) settingsRow(c *ui.Context, icon *ui.SVG, label, tip string, contro
 func (a *app) settingsGeneral(c *ui.Context) {
 	p := a.palette
 	a.settingsSection(c, icoDownload, "下载")
+	ui.Button(c, "分类目录规则…").OnClick(a.openRules)
 
 	folder := ui.Row(c).Height(72).Padding(10, 12).Gap(12).AlignItems(ui.Center).
 		Background(p.Canvas).Radius(8).
@@ -172,6 +174,10 @@ func (a *app) settingsGeneral(c *ui.Context) {
 	a.settingsRow(c, icoMonitor, "关闭窗口后继续下载", tip, func() {
 		c.Key("close-to-tray")
 		ui.Switch(c, &a.s.CloseToTray).Label("关闭到托盘开关").Disabled(reason != "").OnChange(a.saveSettings)
+	})
+	a.settingsRow(c, icoLink, "剪贴板链接提示", "仅识别开启后的新复制；确认后才添加，不保存剪贴板历史。", func() {
+		c.Key("clipboard-prompts")
+		ui.Switch(c, &a.s.ClipboardPrompts).Label("剪贴板链接提示开关").OnChange(func() { a.setClipboardPrompts(a.s.ClipboardPrompts) })
 	})
 
 	if a.proxyErr != "" {
@@ -346,10 +352,24 @@ func (a *app) settingsAbout(c *ui.Context) {
 			SingleLine().Grow(1).Tooltip(a.deps.dataDir)
 		iconButton(c, p, "打开数据目录", icoFolderOpen, false, func() { a.openDataDir() })
 		iconButton(c, p, "复制数据目录", icoCopy, false, func() {
+			a.suppressClipboardCopy(a.deps.dataDir)
 			c.WriteClipboard(a.deps.dataDir)
 			a.toast("已复制数据目录")
 		})
 	})
+	ui.Divider(c).Background(p.Divider)
+	ui.Text(c, "本次运行诊断：仅保留有限的脱敏事件，不含请求头、响应体或剪贴板原文。").FontSize(12).TextColor(p.Muted)
+	count, dropped := a.diagnostics.Stats()
+	ui.Text(c, fmt.Sprintf("已记录 %d 条 · 已省略 %d 条", count, dropped)).FontSize(12).TextColor(p.Muted)
+	ui.Row(c).Gap(8).Children(func() {
+		ui.Button(c, "导出诊断日志").Disabled(a.diagnosticExport.busy).OnClick(a.exportDiagnostics)
+		if a.diagnosticExport.busy {
+			ui.Button(c, "取消日志导出").OnClick(a.cancelDiagnosticExport)
+		}
+	})
+	if a.diagnosticExport.message != "" {
+		ui.Text(c, a.diagnosticExport.message).FontSize(12).TextColor(p.Muted)
+	}
 }
 
 // openDataDir opens the app's data directory.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go-downloader/internal/diagnostics"
+	"go-downloader/internal/rules"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +17,11 @@ import (
 
 // Options configures a Manager. The zero value is not usable: set Dir.
 type Options struct {
+	Diagnostics    diagnostics.Sink
+	DirectoryRules []rules.Rule
+	Clock          Clock
+	// DeferScheduling holds restored plans until platform services are ready.
+	DeferScheduling bool
 	// Dir is where new downloads are saved.
 	Dir string
 	// AppVersion identifies the app in requests (default dev).
@@ -42,18 +49,23 @@ type Options struct {
 
 // Manager is the download queue. Its methods are safe from any goroutine.
 type Manager struct {
-	mu       sync.Mutex
-	opts     Options
-	dir      string
-	max      int
-	auto     bool
-	stall    time.Duration
-	tasks    []*task
-	byID     map[string]*task
-	reserved map[string]bool
-	active   int
-	closed   bool
-	wg       sync.WaitGroup
+	diagnosticPending *diagnostics.Buffer
+	directoryRules    []rules.Rule
+	mu                sync.Mutex
+	opts              Options
+	dir               string
+	max               int
+	auto              bool
+	stall             time.Duration
+	tasks             []*task
+	byID              map[string]*task
+	reserved          map[string]bool
+	active            int
+	closed            bool
+	clock             Clock
+	scheduleStop      chan struct{}
+	scheduleWG        sync.WaitGroup
+	wg                sync.WaitGroup
 
 	lastNotify         atomic.Int64
 	bandwidth          bandwidth
@@ -69,6 +81,8 @@ type Manager struct {
 }
 
 type task struct {
+	history            *speedHistory
+	queueOrder         int64
 	item               Item
 	user, pass         string
 	headers            http.Header
@@ -103,6 +117,9 @@ type task struct {
 
 // New creates a manager.
 func New(opts Options) *Manager {
+	if opts.Clock == nil {
+		opts.Clock = realClock{}
+	}
 	if opts.MaxConcurrent < 1 {
 		opts.MaxConcurrent = 3
 	}
@@ -116,6 +133,7 @@ func New(opts Options) *Manager {
 		opts.ClientFactory = func() (*http.Client, error) { return &http.Client{}, nil }
 	}
 	m := &Manager{
+		clock:      opts.Clock,
 		opts:       opts,
 		dir:        opts.Dir,
 		max:        opts.MaxConcurrent,
@@ -128,6 +146,10 @@ func New(opts Options) *Manager {
 		resetPart:  resetPartFile,
 	}
 	m.bandwidth.set(opts.RateLimit)
+	if opts.Diagnostics != nil {
+		m.diagnosticPending = &diagnostics.Buffer{}
+	}
+	m.directoryRules, _ = rules.Normalize(opts.DirectoryRules)
 	if opts.MaxConnections < 1 {
 		opts.MaxConnections = 16
 	}
@@ -156,19 +178,19 @@ func (m *Manager) SetOnComplete(fn func(Item)) {
 // them. It returns how many were added or given new credentials, how many were
 // skipped as duplicates of an unfinished download, and invalid tokens.
 func (m *Manager) Add(raw string) (added int, skipped int, invalid []string) {
-	targets, invalid := parseTargets(raw)
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		return 0, 0, invalid
+	for _, token := range URLTokens(raw) {
+		if _, err := parseTarget(token); err != nil {
+			invalid = append(invalid, token)
+			continue
+		}
+		a, s, err := m.AddContext(context.Background(), token)
+		added += a
+		skipped += s
+		if err != nil {
+			invalid = append(invalid, DiagnosticText(err.Error()))
+		}
 	}
-	added, skipped = m.addTargetsLocked(targets, m.dir)
-	m.mu.Unlock()
-	if added > 0 {
-		m.kick()
-		m.notify()
-	}
-	return added, skipped, invalid
+	return
 }
 
 // AddContext adds one imported link through the same admission rules as Add.
@@ -184,7 +206,7 @@ func (m *Manager) AddContext(ctx context.Context, raw string) (added, skipped in
 		return 0, 0, fmt.Errorf("请输入一条有效的 HTTP/HTTPS 链接")
 	}
 	m.mu.Lock()
-	dir, closed := m.dir, m.closed
+	dir, closed, directoryRules := m.dir, m.closed, m.directoryRules
 	if !closed && m.unfinishedLocked(targets[0].display) != nil {
 		// Refresh/skip existing records independently of the current default
 		// directory; their original path is already reserved.
@@ -200,6 +222,8 @@ func (m *Manager) AddContext(ctx context.Context, raw string) (added, skipped in
 	if closed {
 		return 0, 0, fmt.Errorf("下载器正在退出")
 	}
+	u, _ := url.Parse(targets[0].url)
+	dir, _ = rules.Select(directoryRules, targets[0].url, NameFromURL(u), dir, "")
 	dir, err = writableDirectory(dir)
 	if err != nil {
 		return 0, 0, err
@@ -230,7 +254,8 @@ func (m *Manager) addTargetsLocked(targets []target, dir string) (added, skipped
 				invalidateSourceLocked(existing)
 				existing.user, existing.pass = t.user, t.pass
 				if m.auto {
-					existing.item.State = StateQueued
+					existing.item.ManualPaused = false
+					m.setStateLocked(existing, StateQueued)
 				}
 				added++
 			} else {
@@ -251,6 +276,7 @@ func (m *Manager) addTargetsLocked(targets []target, dir string) (added, skipped
 			state = StatePaused
 		}
 		item := Item{
+			ManualPaused:    !m.auto,
 			ConnectionLimit: m.defaultConnections,
 			ID:              newID(),
 			URL:             t.display,
@@ -261,8 +287,9 @@ func (m *Manager) addTargetsLocked(targets []target, dir string) (added, skipped
 			Total:           -1,
 			CreatedAt:       timeNow(),
 		}
-		m.byID[item.ID] = &task{item: item, user: t.user, pass: t.pass}
+		m.byID[item.ID] = &task{item: item, user: t.user, pass: t.pass, queueOrder: m.nextQueueOrderLocked()}
 		m.tasks = append(m.tasks, m.byID[item.ID])
+		m.recordStateLocked(m.byID[item.ID])
 		added++
 	}
 	return added, skipped
@@ -285,9 +312,13 @@ func (m *Manager) Pause(id string) {
 		m.mu.Unlock()
 		return
 	}
+	if !t.item.State.Terminal() {
+		t.item.ManualPaused = true
+		t.item.ScheduleWaiting = ""
+	}
 	switch t.item.State {
 	case StateQueued, StateConnecting, StateDownloading:
-		t.item.State = StatePaused
+		m.setStateLocked(t, StatePaused)
 		t.item.Speed = 0
 		t.item.ETA = 0
 		if t.cancel != nil {
@@ -318,8 +349,9 @@ func (m *Manager) request(id string) {
 	}
 	switch t.item.State {
 	case StatePaused, StateFailed:
+		t.item.ManualPaused = false
 		invalidateSourceLocked(t)
-		t.item.State = StateQueued
+		m.setStateLocked(t, StateQueued)
 		t.item.Error = ""
 		t.item.Attempt = 0
 		t.item.Missing = false
@@ -330,8 +362,9 @@ func (m *Manager) request(id string) {
 			return
 		}
 		// The file is gone: download it again.
+		t.item.ManualPaused = false
 		resetVerificationLocked(t, t.item.ExpectedSHA256)
-		t.item.State = StateQueued
+		m.setStateLocked(t, StateQueued)
 		t.item.Missing = false
 		t.item.Error = ""
 		t.item.Done = 0
@@ -362,7 +395,11 @@ func (m *Manager) RemoveMany(ids []string, deleteFiles bool) {
 			continue
 		}
 		delete(m.byID, id)
+		if m.diagnosticPending != nil {
+			m.diagnosticPending.Record(diagnostics.NewEvent(diagnostics.Removed, t.item.ID, t.item.URL, 0, t.item.RetryCount, nil))
+		}
 		t.removed = true
+		t.history = nil
 		invalidateSourceLocked(t)
 		cancelVerificationLocked(t)
 		if t.cancel != nil {
@@ -423,9 +460,13 @@ func deleteFilesFor(path string, deleteFinal bool) {
 func (m *Manager) PauseAll() {
 	m.mu.Lock()
 	for _, t := range m.tasks {
+		if !t.item.State.Terminal() {
+			t.item.ManualPaused = true
+			t.item.ScheduleWaiting = ""
+		}
 		switch t.item.State {
 		case StateQueued, StateConnecting, StateDownloading:
-			t.item.State = StatePaused
+			m.setStateLocked(t, StatePaused)
 			t.item.Speed = 0
 			t.item.ETA = 0
 			if t.cancel != nil {
@@ -450,14 +491,16 @@ func (m *Manager) ResumeAll() {
 		}
 		switch t.item.State {
 		case StatePaused, StateFailed:
+			t.item.ManualPaused = false
 			invalidateSourceLocked(t)
-			t.item.State = StateQueued
+			m.setStateLocked(t, StateQueued)
 			t.item.Error = ""
 			t.item.Attempt = 0
 		case StateCompleted:
 			if t.item.Missing {
+				t.item.ManualPaused = false
 				resetVerificationLocked(t, t.item.ExpectedSHA256)
-				t.item.State = StateQueued
+				m.setStateLocked(t, StateQueued)
 				t.item.Missing = false
 				t.item.Error = ""
 				t.item.Done = 0
@@ -564,9 +607,15 @@ func (m *Manager) Snapshot() ([]Item, Summary) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	items := make([]Item, 0, len(m.tasks))
+	queue := m.queueLocked()
+	positions := make(map[*task]int, len(queue))
+	for i, t := range queue {
+		positions[t] = i + 1
+	}
 	var sum Summary
 	for _, t := range m.tasks {
 		item := t.item
+		item.QueuePosition, item.QueueLength = positions[t], len(queue)
 		item.VerificationQueued = t.verifyQueued
 		item.SourceUpdating = t.sourceCommitting
 		items = append(items, item)
@@ -611,6 +660,8 @@ func (m *Manager) Records() []Record {
 			state = StatePaused
 		}
 		out = append(out, Record{
+			Schedule: t.item.Schedule, ManualPaused: t.item.ManualPaused,
+			QueueOrder:      t.queueOrder,
 			ConnectionLimit: t.item.ConnectionLimit, TransferMode: t.item.TransferMode,
 			ID:               t.item.ID,
 			URL:              t.item.URL,
@@ -644,7 +695,6 @@ func (m *Manager) Records() []Record {
 // user to continue it.
 func (m *Manager) Restore(records []Record) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, r := range records {
 		if r.ID == "" || r.URL == "" || r.Path == "" {
 			continue
@@ -676,6 +726,7 @@ func (m *Manager) Restore(records []Record) {
 		}
 		item := Item{
 			ConnectionLimit: max(1, min(r.ConnectionLimit, 8)), TransferMode: r.TransferMode,
+			Schedule: r.Schedule, ManualPaused: r.ManualPaused || !r.Schedule.Enabled,
 			ID:             r.ID,
 			URL:            r.URL,
 			DisplayURL:     r.URL,
@@ -694,7 +745,13 @@ func (m *Manager) Restore(records []Record) {
 			RetryCount:     r.RetryCount,
 			Missing:        false,
 		}
-		t := &task{item: item, etag: r.ETag, lastModified: r.LastModified, customName: r.CustomName}
+		if item.Schedule.Validate() != nil {
+			item.Schedule.Enabled, item.ManualPaused = false, true
+		}
+		if item.Schedule.Enabled && r.State == StateFailed {
+			item.State = StateFailed
+		}
+		t := &task{item: item, etag: r.ETag, lastModified: r.LastModified, customName: r.CustomName, queueOrder: r.QueueOrder}
 		t.sourceGeneration = r.SourceRevision
 		if !r.SourceReset {
 			t.sourceAcknowledged = r.SourceRevision
@@ -771,19 +828,27 @@ func (m *Manager) Restore(records []Record) {
 		reservePath(m.reserved, item.Path)
 		m.tasks = append(m.tasks, t)
 		m.byID[item.ID] = t
+		m.recordStateLocked(t)
 	}
+	m.normalizeQueueLocked()
+	m.mu.Unlock()
+	m.kick()
+	m.notify()
 }
 
 // Shutdown stops every worker and leaves the downloads paused. It waits for
 // them to release their files.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
+	if !m.closed && m.scheduleStop != nil {
+		close(m.scheduleStop)
+	}
 	m.closed = true
 	for _, t := range m.tasks {
 		cancelVerificationLocked(t)
 		invalidateSourceLocked(t)
 		if t.item.State.Active() {
-			t.item.State = StatePaused
+			m.setStateLocked(t, StatePaused)
 			t.item.Speed = 0
 			t.item.ETA = 0
 			if t.cancel != nil {
@@ -792,6 +857,7 @@ func (m *Manager) Shutdown() {
 		}
 	}
 	m.mu.Unlock()
+	m.scheduleWG.Wait()
 	m.wg.Wait()
 	m.verifyWG.Wait()
 	m.sourceWG.Wait()
@@ -805,20 +871,23 @@ func (m *Manager) kick() {
 		m.mu.Unlock()
 		return
 	}
-	started := false
+	if len(m.tasks) > 0 && !m.opts.DeferScheduling {
+		m.ensureSchedulerLocked()
+	}
+	started := m.evaluateSchedulesLocked(m.clock.Now())
 	for m.active < m.max {
 		var next *task
 		for _, t := range m.tasks {
-			if !t.working && t.item.State == StateQueued {
+			// Scheduling order is independent of task storage and UI sorting.
+			if !t.working && t.item.State == StateQueued && (!m.opts.DeferScheduling || !t.item.Schedule.Enabled) && (next == nil || t.queueOrder < next.queueOrder) {
 				next = t
-				break
 			}
 		}
 		if next == nil {
 			break
 		}
 		next.working = true
-		next.item.State = StateConnecting
+		m.setStateLocked(next, StateConnecting)
 		next.item.Error = ""
 		next.item.FinishedAt = time.Time{}
 		next.item.Attempt = 0
@@ -862,7 +931,7 @@ func (m *Manager) finishWorker(t *task) {
 		t.done = nil
 	}
 	if !t.removed && (t.item.State == StateConnecting || t.item.State == StateDownloading) {
-		t.item.State = StatePaused
+		m.setStateLocked(t, StatePaused)
 		t.item.Speed = 0
 		t.item.ETA = 0
 	}
@@ -883,12 +952,13 @@ func (m *Manager) fail(t *task, err error) {
 		m.mu.Unlock()
 		return
 	}
-	t.item.State = StateFailed
+	m.setStateLocked(t, StateFailed)
 	t.item.Error = taskError(t, err)
 	t.item.Speed = 0
 	t.item.ETA = 0
 	t.item.FinishedAt = timeNow()
 	m.mu.Unlock()
+	m.diagnostic(t, diagnostics.Failed, 0, err)
 	m.notify()
 }
 
@@ -930,17 +1000,19 @@ func (m *Manager) downloadSingle(ctx context.Context, t *task) error {
 
 func (m *Manager) setRetrying(t *task, attempt int, err error) {
 	m.mu.Lock()
-	t.item.State = StateConnecting
+	m.setStateLocked(t, StateConnecting)
 	t.item.Attempt = attempt
 	t.item.RetryCount++
 	t.item.Error = fmt.Sprintf("正在重试（%d/%d）：%s", attempt, 2, taskError(t, err))
 	t.item.Speed = 0
 	t.item.ETA = 0
 	m.mu.Unlock()
+	m.diagnostic(t, diagnostics.Retry, 0, err)
 	m.notify()
 }
 
 func (m *Manager) notify() {
+	m.flushDiagnostics()
 	m.mu.Lock()
 	fn := m.opts.OnChange
 	m.mu.Unlock()

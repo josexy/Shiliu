@@ -24,6 +24,7 @@ type backgroundWindow interface {
 }
 
 type trayState struct {
+	hidden                               bool
 	handle                               trayHandle
 	window                               backgroundWindow
 	initialized, quitting, sessionEnding bool
@@ -104,6 +105,7 @@ func (a *app) restoreWindow() {
 	}
 	a.tray.window.Show()
 	a.tray.window.Focus()
+	a.tray.hidden = false
 }
 
 func (a *app) bindBackgroundWindow(window backgroundWindow) {
@@ -119,6 +121,7 @@ func (a *app) onWindowClose(event *mygo.CloseEvent) {
 	}
 	event.PreventDefault()
 	a.tray.window.Hide()
+	a.tray.hidden = true
 }
 
 func (a *app) requestQuit() {

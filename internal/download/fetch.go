@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go-downloader/internal/diagnostics"
 	"io"
 	"net"
 	"net/http"
@@ -105,7 +106,7 @@ func (m *Manager) fetch(ctx context.Context, t *task) error {
 
 	reqCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, cur.URL, nil)
+	req, err := http.NewRequestWithContext(diagnostics.WithTask(reqCtx, cur.ID), http.MethodGet, cur.URL, nil)
 	if err != nil {
 		return err
 	}
@@ -132,6 +133,7 @@ func (m *Manager) fetch(ctx context.Context, t *task) error {
 	defer release()
 	client, err := m.opts.ClientFactory()
 	if err != nil {
+		m.diagnostic(t, diagnostics.ProxyFailure, 0, err)
 		return fmt.Errorf("无法建立网络连接：%w", err)
 	}
 	timer := time.AfterFunc(m.stall, func() {
@@ -157,6 +159,7 @@ func (m *Manager) fetch(ctx context.Context, t *task) error {
 	}
 
 	code := resp.StatusCode
+	m.diagnostic(t, diagnostics.HTTP, code, nil)
 	var total int64 = -1
 	switch {
 	case code == http.StatusPartialContent:
@@ -270,6 +273,7 @@ func (m *Manager) fetch(ctx context.Context, t *task) error {
 		timer.Stop()
 		refundReadBudget(&m.bandwidth, &t.bandwidth, allowed-n)
 		if n > 0 {
+			m.recordNetworkBytes(t, n)
 			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
 				file.Close()
 				return fmt.Errorf("写入文件失败：%w", writeErr)
@@ -342,7 +346,7 @@ func (m *Manager) adoptName(t *task, resp *http.Response) {
 
 func (m *Manager) beginTransfer(t *task, total, done int64, etag, lastModified string, resumable bool) {
 	m.mu.Lock()
-	t.item.State = StateDownloading
+	m.setStateLocked(t, StateDownloading)
 	t.item.Total = total
 	t.item.Done = done
 	t.item.Error = ""
@@ -361,7 +365,6 @@ func (m *Manager) beginTransfer(t *task, total, done int64, etag, lastModified s
 func (m *Manager) advance(t *task, n, total int64) {
 	m.mu.Lock()
 	t.item.Done += n
-	t.item.NetworkBytes += n
 	if total >= 0 {
 		t.item.Total = total
 	}
@@ -427,7 +430,7 @@ func (m *Manager) finalize(t *task, partPath, metaPath string, done, total int64
 	}
 
 	m.mu.Lock()
-	t.item.State = StateCompleted
+	m.setStateLocked(t, StateCompleted)
 	t.item.Done = done
 	if total >= 0 {
 		t.item.Total = total

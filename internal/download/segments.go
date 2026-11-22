@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go-downloader/internal/diagnostics"
 	"io"
 	"net/http"
 	"os"
@@ -240,6 +241,7 @@ func (m *Manager) downloadSegment(ctx context.Context, t *task, f *os.File, meta
 		t.item.Attempt = attempt
 		t.item.Error = "分片连接中断，正在重试"
 		m.mu.Unlock()
+		m.diagnostic(t, diagnostics.Retry, 0, err)
 		m.notify()
 		timer := time.NewTimer(time.Duration(attempt) * 1500 * time.Millisecond)
 		select {

@@ -66,6 +66,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 	want.View = settings.ViewCards
 	want.MaxConcurrent = 5
 	want.CloseToTray = true
+	want.ClipboardPrompts = true
+	want.DirectoryRules = []settings.DirectoryRule{{ID: "z", Enabled: true, Kind: "extension", Pattern: "zip", Dir: dir}, {ID: "a", Kind: "domain", Pattern: "example.com", Dir: dir}}
 	want.RateLimit = 2048 * 1024
 	want.Proxy = proxy.Config{Mode: proxy.ModeManual, Kind: proxy.KindSOCKS5, Host: "127.0.0.1", Port: 1080, Password: "do-not-save"}
 	if err := s.SaveSettings(want); err != nil {
@@ -90,6 +92,12 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 	if got.RateLimit != want.RateLimit {
 		t.Errorf("rate limit = %d, want %d", got.RateLimit, want.RateLimit)
+	}
+	if !got.ClipboardPrompts {
+		t.Fatal("clipboard preference lost")
+	}
+	if len(got.DirectoryRules) != 2 || got.DirectoryRules[0].ID != "z" || got.DirectoryRules[1].ID != "a" || got.DirectoryRules[1].Enabled {
+		t.Fatal("rule order/enabled lost", got.DirectoryRules)
 	}
 	if got.Proxy.Mode != proxy.ModeManual || got.Proxy.Port != 1080 {
 		t.Errorf("proxy = %+v", got.Proxy)
@@ -123,6 +131,9 @@ func TestTasksRoundTrip(t *testing.T) {
 		{ID: "a", URL: "https://example.com/a.zip", FileName: "a.zip", Path: filepath.Join(dir, "a.zip"), State: download.StateCompleted, Total: 10, Done: 10, CreatedAt: now, FinishedAt: now},
 		{ID: "b", URL: "https://example.com/b.zip", FileName: "b.zip", Path: filepath.Join(dir, "b.zip"), State: download.StatePaused, Total: 100, Done: 40, ETag: `"x"`, Resumable: true, CreatedAt: now},
 	}
+	records[0].QueueOrder, records[1].QueueOrder = 2, 1
+	records[1].Schedule = download.Schedule{Enabled: true, StartAt: now.UTC(), StartReached: true, DailyEnabled: true, DailyStartMinute: 1320, DailyEndMinute: 360}
+	records[1].ManualPaused = true
 	if err := s.SaveTasks(records); err != nil {
 		t.Fatal(err)
 	}
@@ -130,8 +141,11 @@ func TestTasksRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[1].ID != "b" || got[1].Done != 40 || !got[1].Resumable {
+	if len(got) != 2 || got[1].ID != "b" || got[1].Done != 40 || !got[1].Resumable || got[0].QueueOrder != 2 || got[1].QueueOrder != 1 {
 		t.Errorf("records = %+v", got)
+	}
+	if got[1].Schedule != records[1].Schedule || !got[1].ManualPaused {
+		t.Fatalf("schedule intent lost: %+v", got[1])
 	}
 }
 

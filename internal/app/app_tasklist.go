@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"go-downloader/internal/download"
 
 	"github.com/egoist/mygo/ui"
 
@@ -10,6 +11,8 @@ import (
 )
 
 type taskListState struct {
+	drop                                  bool
+	batchID                               uint64
 	open, wasOpen, export, busy, finished bool
 	generation                            uint64
 	ctx                                   context.Context
@@ -37,6 +40,9 @@ func (a *app) openExport() {
 }
 
 func (a *app) closeTaskList() {
+	if a.taskList.drop && a.restoreQuickInput {
+		a.focusQuickInput = true
+	}
 	if a.taskList.cancel != nil {
 		a.taskList.cancel()
 	}
@@ -117,7 +123,11 @@ func submitImportCandidates(ctx context.Context, engine downloader, candidates [
 		if err != nil || added+skipped == 0 {
 			result.failed++
 			if len(result.errors) < 10 {
-				result.errors = append(result.errors, fmt.Sprintf("第 %d 个有效候选创建失败", i+1))
+				message := fmt.Sprintf("第 %d 个有效候选创建失败", i+1)
+				if err != nil {
+					message += "：" + download.DiagnosticText(err.Error())
+				}
+				result.errors = append(result.errors, message)
 			}
 		}
 	}

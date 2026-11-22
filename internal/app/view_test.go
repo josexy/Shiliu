@@ -26,6 +26,7 @@ var testNow = time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)
 
 // fakeEngine is an in-memory downloader for the view tests.
 type fakeEngine struct {
+	histories       map[string][]download.SpeedSample
 	mu              sync.Mutex
 	items           []download.Item
 	calls           []string
@@ -126,7 +127,7 @@ func (f *fakeEngine) AddTask(opts download.AddOptions) (string, error) {
 	f.advancedOptions = append(f.advancedOptions, opts)
 	it := &f.items[len(f.items)-1]
 	dir := opts.Dir
-	if dir == "" {
+	if dir == "" || !opts.DirOverride {
 		dir = f.dir
 	}
 	if opts.FileName != "" {
@@ -136,6 +137,9 @@ func (f *fakeEngine) AddTask(opts download.AddOptions) (string, error) {
 	it.TaskRateLimit = opts.TaskRateLimit
 	it.ConnectionLimit = opts.ConnectionLimit
 	it.ExpectedSHA256, _ = download.NormalizeSHA256(opts.ExpectedSHA256)
+	if opts.Schedule != nil {
+		it.Schedule = *opts.Schedule
+	}
 	if it.ExpectedSHA256 != "" {
 		it.VerificationState = download.VerificationPending
 	}

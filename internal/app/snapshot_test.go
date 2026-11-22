@@ -232,6 +232,7 @@ func TestSnapshots(t *testing.T) {
 	// First-phase dialogs and the bandwidth setting at minimum size and 125%.
 	features := newTestApp(t, &fakeEngine{items: sampleItems()})
 	features.s.DownloadDir = a.s.DownloadDir
+	features.deps.dataDir = a.deps.dataDir
 	featureTester := testerFor(features)
 	featureTester.SetSize(960, 640)
 	featureTester.SetScale(1.25)
@@ -241,6 +242,86 @@ func TestSnapshots(t *testing.T) {
 			name = "dark"
 		}
 		featureTester.SetDark(dark)
+		for _, state := range []string{"empty", "paused", "completed", "peak", "gap"} {
+			f := features.engine.(*fakeEngine)
+			original := f.items[0]
+			f.items[0].State = download.StateDownloading
+			if state == "paused" {
+				f.items[0].State = download.StatePaused
+				f.items[0].Speed = 0
+			}
+			if state == "completed" {
+				f.items[0].State = download.StateCompleted
+				f.items[0].Speed = 0
+				f.items[0].Done = f.items[0].Total
+				f.items[0].FinishedAt = testNow.Add(-30 * time.Second)
+			}
+			f.histories = map[string][]download.SpeedSample{original.ID: historyFixture(state)}
+			features.openDetails(original.ID)
+			featureTester.Frame()
+			featureTester.Wheel(600, 370, 0, -5000)
+			featureTester.Advance(500 * time.Millisecond)
+			featureTester.Wheel(600, 370, 0, 350)
+			featureTester.Advance(500 * time.Millisecond)
+			save(name+"-compact-125-history-"+state+".png", featureTester)
+			features.detailsOpen = false
+			f.items[0] = original
+			f.histories = nil
+		}
+		features.openSettings(3)
+		featureTester.Frame()
+		save(name+"-compact-125-diagnostics.png", featureTester)
+		features.diagnosticExport.busy = true
+		features.diagnosticExport.message = "正在导出…"
+		featureTester.Frame()
+		save(name+"-compact-125-diagnostics-busy.png", featureTester)
+		features.diagnosticExport = diagnosticExportState{}
+		features.settingsOpen = false
+		features.s.ClipboardPrompts = true
+		features.clipboard.pending = []string{"https://user:secret@example.com/releases/archive.zip?token=private"}
+		featureTester.Frame()
+		save(name+"-compact-125-clipboard-prompt.png", featureTester)
+		features.clipboard.pending = nil
+		features.openSettings(0)
+		featureTester.Frame()
+		featureTester.Wheel(600, 400, 0, 1200)
+		featureTester.Advance(500 * time.Millisecond)
+		save(name+"-compact-125-clipboard-settings.png", featureTester)
+		features.settingsOpen = false
+		features.s.ClipboardPrompts = false
+		hoverTester := ui.NewTester(func(c *ui.Context) {
+			features.palette = paletteFor(c.Theme().Dark)
+			c.SetTheme(features.palette.theme())
+			features.drawAddCard(c, func(ui.Element) bool { return true })
+		}, 960, 240)
+		hoverTester.SetScale(1.25)
+		hoverTester.SetDark(dark)
+		hoverTester.Frame()
+		save(name+"-compact-125-drop-hover.png", hoverTester)
+		features.beginDrop(testURIData("https://example.com/a.zip\nhttps://example.com/b.zip"))
+		featureTester.Frame()
+		save(name+"-compact-125-drop-preview.png", featureTester)
+		features.closeTaskList()
+		features.s.DirectoryRules = []settings.DirectoryRule{
+			{ID: "archives", Enabled: true, Kind: "extension", Pattern: "zip", Dir: filepath.Join(features.s.DownloadDir, "压缩包")},
+			{ID: "domain", Enabled: true, Kind: "domain", Pattern: "*.example.com", Dir: filepath.Join(features.s.DownloadDir, "项目资料")},
+		}
+		features.openRules()
+		features.ruleEditor.previewURL = "https://files.example.com/archive.zip"
+		featureTester.Frame()
+		save(name+"-compact-125-rules.png", featureTester)
+		features.ruleEditor.open = false
+		queueItem := &features.engine.(*fakeEngine).items[1]
+		queueItem.State = download.StateQueued
+		queueItem.QueuePosition, queueItem.QueueLength = 2, 3
+		features.openDetails(queueItem.ID)
+		featureTester.Frame()
+		save(name+"-compact-125-queue.png", featureTester)
+		features.detailsOpen = false
+		features.openSchedule(download.Item{ID: "planned", Schedule: download.Schedule{Enabled: true, StartAt: time.Date(2027, 1, 2, 22, 0, 0, 0, time.Local), DailyEnabled: true, DailyStartMinute: 1320, DailyEndMinute: 360}})
+		featureTester.Frame()
+		save(name+"-compact-125-schedule.png", featureTester)
+		features.scheduleEditor.open = false
 		features.openAdvanced()
 		features.advanced.url = "https://example.com/download/archive.zip"
 		features.advanced.fileName = "项目资料.zip"
@@ -250,6 +331,10 @@ func TestSnapshots(t *testing.T) {
 		featureTester.Wheel(600, 370, 0, 420)
 		featureTester.Advance(500 * time.Millisecond)
 		save(name+"-compact-125-advanced-headers.png", featureTester)
+		features.advanced.schedule = newScheduleDraft(download.Schedule{Enabled: true, DailyEnabled: true, DailyStartMinute: 1320, DailyEndMinute: 360})
+		featureTester.Wheel(600, 370, 0, 1000)
+		featureTester.Advance(500 * time.Millisecond)
+		save(name+"-compact-125-advanced-schedule.png", featureTester)
 		features.clearAdvanced()
 		features.openDetails("d1")
 		featureTester.Frame()
@@ -260,7 +345,7 @@ func TestSnapshots(t *testing.T) {
 		save(name+"-compact-125-details-rate-error.png", featureTester)
 		features.openDetails("d3")
 		featureTester.Frame()
-		featureTester.Wheel(600, 370, 0, 500)
+		featureTester.Wheel(600, 370, 0, 1800)
 		featureTester.Advance(500 * time.Millisecond)
 		save(name+"-compact-125-details-error.png", featureTester)
 		features.detailsOpen = false

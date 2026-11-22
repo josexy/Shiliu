@@ -33,7 +33,7 @@ func (a *app) advancedModal(c *ui.Context) {
 				ui.Field(c, "保存位置", func() {
 					ui.Row(c).Gap(8).Children(func() {
 						c.Key("advanced-dir")
-						ui.TextInput(c, &a.advanced.dir).Label("任务保存位置").Grow(1)
+						ui.TextInput(c, &a.advanced.dir).Label("任务保存位置").Grow(1).OnChange(func() { a.advanced.dirOverride = true })
 						ui.Button(c, "选择…").OnClick(a.chooseAdvancedFolder)
 					})
 				})
@@ -41,6 +41,9 @@ func (a *app) advancedModal(c *ui.Context) {
 					c.Key("advanced-name")
 					ui.TextInput(c, &a.advanced.fileName).Label("任务文件名").Placeholder("留空时自动识别文件名")
 				})
+				c.Key("advanced-dir-override")
+				ui.Checkbox(c, &a.advanced.dirOverride, "自定义目录（覆盖分类规则）")
+				ui.Text(c, a.advancedDirectoryPreview()).FontSize(12).TextColor(p.Muted).SingleLine().Tooltip(a.advancedDirectoryPreview())
 				ui.Field(c, "任务限速（KB/s，0 表示不另设上限）", func() {
 					c.Key("advanced-task-rate")
 					ui.TextInput(c, &a.advanced.rateKiB).Label("高级任务限速 KB/s").Placeholder("0 表示不另设任务上限")
@@ -66,13 +69,14 @@ func (a *app) advancedModal(c *ui.Context) {
 					ui.TextArea(c, &a.advanced.headers).Height(78).Label("自定义请求头").Placeholder("每行一个，例如 User-Agent: Downloader")
 				})
 				ui.Text(c, "请求头仅在本次运行中保留；重启后可用同一链接补填，已有进度会保留。更新已有任务时沿用原保存路径。").FontSize(12).TextColor(p.Muted)
+				a.scheduleFields(c, "advanced", &a.advanced.schedule)
 			})
 			if a.advanced.err != "" {
 				ui.Text(c, a.advanced.err).FontSize(12).TextColor(p.Danger)
 			}
 			ui.Divider(c).Background(p.Divider)
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "遵循「添加后自动开始」设置").FontSize(12).TextColor(p.Muted).Grow(1)
+				ui.Text(c, "启用计划时按计划开始").FontSize(12).TextColor(p.Muted).Grow(1)
 				ui.Button(c, "取消").OnClick(a.clearAdvanced)
 				label := "创建下载"
 				if a.advanced.busy {

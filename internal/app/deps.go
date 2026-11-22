@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/transfer"
 
 	"go-downloader/internal/appinfo"
 	"go-downloader/internal/proxy"
@@ -16,10 +17,14 @@ import (
 
 // deps are the world outside the app, so tests can replace it.
 type deps struct {
-	dataDir    string
-	defaultDir string
-	version    string
-	secrets    store.SecretStore
+	watchClipboard    func(func()) func()
+	readClipboardText func() ([]byte, error)
+	// Optional native acceptance observer; receives format names, never payloads.
+	dropObserved func([]transfer.Format)
+	dataDir      string
+	defaultDir   string
+	version      string
+	secrets      store.SecretStore
 
 	now              func() time.Time
 	async            func(func())
@@ -31,11 +36,12 @@ type deps struct {
 	backgroundWindow func(*mygo.Window) backgroundWindow
 	quit             func()
 
-	pickFolder   func(parent *mygo.Window, title string) (string, error)
-	pickTaskList func(parent *mygo.Window) (string, error)
-	saveTaskList func(parent *mygo.Window) (string, error)
-	openPath     func(path string) error
-	reveal       func(path string)
+	pickFolder      func(parent *mygo.Window, title string) (string, error)
+	pickTaskList    func(parent *mygo.Window) (string, error)
+	saveTaskList    func(parent *mygo.Window) (string, error)
+	saveDiagnostics func(parent *mygo.Window) (string, error)
+	openPath        func(path string) error
+	reveal          func(path string)
 
 	detectSystem func(ctx context.Context) (*proxy.System, error)
 	testProxy    func(ctx context.Context, cfg proxy.Config, sys *proxy.System, target string) (time.Duration, error)
@@ -46,6 +52,13 @@ type deps struct {
 func realDeps() deps {
 	version := appinfo.NormalizeVersion(mygo.App.Version())
 	return deps{
+		saveDiagnostics: func(parent *mygo.Window) (string, error) {
+			return mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, Title: "导出本次诊断日志", DefaultPath: "diagnostics.json", Filters: []mygo.FileFilter{{Name: "JSON 日志", Extensions: []string{"json"}}}})
+		},
+		watchClipboard: mygo.Clipboard.OnChanged,
+		readClipboardText: func() ([]byte, error) {
+			return clipboardText(mygo.Clipboard.Formats, func() (transfer.Data, error) { return mygo.Clipboard.Read(transfer.Text) })
+		},
 		version:         version,
 		trayUnavailable: trayPlatformReason(runtime.GOOS),
 		newTray: func() (trayHandle, error) {

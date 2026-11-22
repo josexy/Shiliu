@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go-downloader/internal/appinfo"
+	"go-downloader/internal/diagnostics"
 	"net/http"
 	"net/url"
 	"strings"
@@ -34,10 +35,11 @@ func (m *Manager) openRange(ctx context.Context, t *task, source requestSource, 
 	cleanup := func() { cancel(); release() }
 	client, err := m.opts.ClientFactory()
 	if err != nil {
+		m.diagnostic(t, diagnostics.ProxyFailure, 0, err)
 		cleanup()
 		return nil, networkReader{}, nil, err
 	}
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, source.url, nil)
+	req, err := http.NewRequestWithContext(diagnostics.WithTask(reqCtx, m.current(t).ID), http.MethodGet, source.url, nil)
 	if err != nil {
 		cleanup()
 		return nil, networkReader{}, nil, err
@@ -69,6 +71,7 @@ func (m *Manager) openRange(ctx context.Context, t *task, source requestSource, 
 		return nil, networkReader{}, nil, err
 	}
 	closeResponse := func() { timer.Stop(); resp.Body.Close(); cleanup() }
+	m.diagnostic(t, diagnostics.HTTP, resp.StatusCode, nil)
 	if stalled.Load() {
 		closeResponse()
 		return nil, networkReader{}, nil, errStalled

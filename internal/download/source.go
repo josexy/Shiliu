@@ -169,7 +169,7 @@ func (m *Manager) commitSourceLocked(t *task, d *SourceDraft) {
 	t.item.NeedsHeaders = false
 	t.item.SourceRevision = d.generation
 	t.item.SourceReset = !d.preview.Reuse && d.partInfo != nil && d.partInfo.Size() > 0
-	t.item.State = StatePaused
+	m.setStateLocked(t, StatePaused)
 	t.item.Error = ""
 	t.item.Speed = 0
 	t.item.ETA = 0

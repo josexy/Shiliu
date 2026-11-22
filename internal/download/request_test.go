@@ -33,7 +33,7 @@ func TestAdvancedDownloadConfigurationAndName(t *testing.T) {
 	}
 	headers := http.Header{"Referer": {"https://source.example/"}, "Cookie": {"session=private-cookie"},
 		"X-Token": {"private-token"}, "User-Agent": {"Custom Agent"}}
-	id, err := m.AddTask(AddOptions{URL: srv.URL + "/original", Dir: dir, FileName: "chosen.bin", Headers: headers})
+	id, err := m.AddTask(AddOptions{URL: srv.URL + "/original", Dir: dir, DirOverride: true, FileName: "chosen.bin", Headers: headers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestAdvancedValidation(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.AddTask(AddOptions{URL: "https://example.com/a", Dir: file}); err == nil {
+	if _, err := m.AddTask(AddOptions{URL: "https://example.com/a", Dir: file, DirOverride: true}); err == nil {
 		t.Fatal("accepted a non-writable directory")
 	}
 }

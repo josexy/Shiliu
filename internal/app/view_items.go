@@ -183,6 +183,13 @@ func (a *app) itemMenu(c *ui.Context, m *ui.Menu, it download.Item) {
 		a.engine.Retry(it.ID)
 	}
 	m.Separator()
+	m.Item(queuePositionLabel(it)).Disabled(true)
+	for _, action := range queueActions(it) {
+		if m.Item(action.label).Disabled(action.disabled).Chosen() {
+			a.moveQueue(it.ID, action.move)
+		}
+	}
+	m.Separator()
 	if m.Item("从列表移除").Chosen() {
 		a.removeFromList(it)
 	}

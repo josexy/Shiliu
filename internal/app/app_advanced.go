@@ -7,11 +7,13 @@ import (
 )
 
 type advancedState struct {
+	schedule    scheduleDraft
 	open        bool
 	busy        bool
 	generation  uint64
 	url         string
 	dir         string
+	dirOverride bool
 	fileName    string
 	referer     string
 	cookie      string
@@ -26,6 +28,7 @@ func (a *app) openAdvanced() {
 	generation := a.advanced.generation + 1
 	a.advanced = advancedState{open: true, generation: generation, dir: a.s.DownloadDir, rateKiB: "0"}
 	a.advanced.connections = numberLabel(a.s.TaskConnections)
+	a.advanced.schedule = newScheduleDraft(download.Schedule{})
 	if valid, invalid := download.NormalizeURLs(a.input); len(valid) == 1 && len(invalid) == 0 {
 		// Keep in-memory URL credentials when pre-filling the advanced form.
 		a.advanced.url = strings.TrimSpace(a.input)
@@ -52,6 +55,7 @@ func (a *app) chooseAdvancedFolder() {
 				a.advanced.err = "无法选择文件夹：" + err.Error()
 			} else if dir != "" {
 				a.advanced.dir = dir
+				a.advanced.dirOverride = true
 			}
 		})
 	})
@@ -59,6 +63,11 @@ func (a *app) chooseAdvancedFolder() {
 
 func (a *app) submitAdvanced() {
 	if a.advanced.busy {
+		return
+	}
+	schedule, err := a.advanced.schedule.parse()
+	if err != nil {
+		a.advanced.err = err.Error()
 		return
 	}
 	connections, err := download.ParseConnectionCount(a.advanced.connections, 8)
@@ -88,7 +97,11 @@ func (a *app) submitAdvanced() {
 		headers.Set("Cookie", a.advanced.cookie)
 	}
 	opts := download.AddOptions{URL: a.advanced.url, Dir: a.advanced.dir,
-		FileName: a.advanced.fileName, Headers: headers, TaskRateLimit: rate, ExpectedSHA256: expected, ConnectionLimit: connections}
+		DirOverride: a.advanced.dirOverride,
+		FileName:    a.advanced.fileName, Headers: headers, TaskRateLimit: rate, ExpectedSHA256: expected, ConnectionLimit: connections}
+	if schedule.Enabled || !schedule.StartAt.IsZero() || schedule.DailyEnabled {
+		opts.Schedule = &schedule
+	}
 	a.advanced.busy, a.advanced.err = true, ""
 	generation, engine := a.advanced.generation, a.engine
 	a.deps.async(func() {

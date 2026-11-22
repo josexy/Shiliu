@@ -2,6 +2,7 @@
 package settings
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -37,19 +38,21 @@ const (
 
 // Settings are saved as settings.json.
 type Settings struct {
-	Version          int          `json:"version"`
-	DownloadDir      string       `json:"downloadDir"`
-	Theme            Theme        `json:"theme"`
-	View             ViewMode     `json:"view"`
-	Sort             SortKey      `json:"sort"`
-	Proxy            proxy.Config `json:"proxy"`
-	MaxConcurrent    int          `json:"maxConcurrent"`
-	MaxConnections   int          `json:"maxConnections,omitempty"`
-	TaskConnections  int          `json:"taskConnections,omitempty"`
-	RateLimit        int64        `json:"rateLimit,omitempty"`
-	NotifyOnComplete bool         `json:"notifyOnComplete"`
-	AutoStart        bool         `json:"autoStart"`
-	CloseToTray      bool         `json:"closeToTray,omitempty"`
+	ClipboardPrompts bool            `json:"clipboardPrompts,omitempty"`
+	DirectoryRules   []DirectoryRule `json:"directoryRules,omitempty"`
+	Version          int             `json:"version"`
+	DownloadDir      string          `json:"downloadDir"`
+	Theme            Theme           `json:"theme"`
+	View             ViewMode        `json:"view"`
+	Sort             SortKey         `json:"sort"`
+	Proxy            proxy.Config    `json:"proxy"`
+	MaxConcurrent    int             `json:"maxConcurrent"`
+	MaxConnections   int             `json:"maxConnections,omitempty"`
+	TaskConnections  int             `json:"taskConnections,omitempty"`
+	RateLimit        int64           `json:"rateLimit,omitempty"`
+	NotifyOnComplete bool            `json:"notifyOnComplete"`
+	AutoStart        bool            `json:"autoStart"`
+	CloseToTray      bool            `json:"closeToTray,omitempty"`
 }
 
 // Default returns the settings of a first run.
@@ -71,6 +74,22 @@ func Default(downloadDir string) Settings {
 
 // Normalize repairs values a hand-edited or older settings file may hold.
 func (s *Settings) Normalize(defaultDir string) {
+	// Invalid hand-edited rules are ignored; the editor validates atomically.
+	var valid []DirectoryRule
+	seen := map[string]bool{}
+	for i, rule := range s.DirectoryRules {
+		if rule.ID == "" || seen[rule.ID] {
+			rule.ID = fmt.Sprintf("restored-rule-%d", i)
+			for suffix := 1; seen[rule.ID]; suffix++ {
+				rule.ID = fmt.Sprintf("restored-rule-%d-%d", i, suffix)
+			}
+		}
+		if normalized, err := NormalizeDirectoryRules([]DirectoryRule{rule}); err == nil {
+			valid = append(valid, normalized[0])
+			seen[rule.ID] = true
+		}
+	}
+	s.DirectoryRules = valid
 	s.Version = 1
 	switch s.Theme {
 	case ThemeSystem, ThemeLight, ThemeDark:

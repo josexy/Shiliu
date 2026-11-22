@@ -31,11 +31,7 @@ func (r networkReader) Read(p []byte) (int, error) {
 	r.timer.Stop()
 	refundReadBudget(&r.manager.bandwidth, &r.task.bandwidth, n-read)
 	if read > 0 {
-		r.manager.mu.Lock()
-		r.task.item.NetworkBytes += int64(read)
-		r.manager.sampleSpeedLocked(r.task)
-		r.manager.mu.Unlock()
-		r.manager.notifyThrottled()
+		r.manager.recordNetworkBytes(r.task, read)
 	}
 	if r.stalled.Load() {
 		return read, errStalled

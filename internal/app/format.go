@@ -117,6 +117,9 @@ func stateLabel(s download.State) string {
 
 // detailLine is the smaller caption under the progress bar.
 func detailLine(it download.Item, now time.Time) string {
+	if it.ScheduleWaiting != "" {
+		return it.ScheduleWaiting
+	}
 	switch it.State {
 	case download.StateQueued:
 		return "等待开始"

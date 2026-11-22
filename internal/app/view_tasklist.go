@@ -17,6 +17,9 @@ func (a *app) taskListModal(c *ui.Context) {
 	p := a.palette
 	width, height := c.Size()
 	title := "导入 TXT 链接"
+	if a.taskList.drop {
+		title = "拖放链接预览"
+	}
 	if a.taskList.export {
 		title = "导出任务清单"
 	}
