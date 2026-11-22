@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "fileName": "file.bin",
+      "url": "https://example.com/file.bin",
+      "total": -1,
+      "done": 12,
+      "state": "paused"
+    },
+    {
+      "fileName": "empty.txt",
+      "url": "https://example.com/empty.txt",
+      "total": 0,
+      "done": 0,
+      "state": "completed"
+    }
+  ]
+}

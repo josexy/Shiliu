@@ -29,9 +29,7 @@ func NormalizeURLs(raw string) (valid []string, invalid []string) {
 }
 
 func parseTargets(raw string) (targets []target, invalid []string) {
-	for _, token := range strings.FieldsFunc(raw, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == '\t' || unicode.IsSpace(r) || r == ',' || r == '，'
-	}) {
+	for _, token := range URLTokens(raw) {
 		token = strings.TrimSpace(token)
 		if token == "" {
 			continue
@@ -44,6 +42,15 @@ func parseTargets(raw string) (targets []target, invalid []string) {
 		targets = append(targets, t)
 	}
 	return targets, invalid
+}
+
+// URLTokens splits pasted or imported links on whitespace and ASCII/Chinese
+// commas. Keep this shared with import previews so confirmation parses the same
+// candidates. The returned strings may contain credentials: never display them.
+func URLTokens(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		return unicode.IsSpace(r) || r == ',' || r == '，'
+	})
 }
 
 func parseTarget(token string) (target, error) {
