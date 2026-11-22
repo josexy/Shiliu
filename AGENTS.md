@@ -64,7 +64,7 @@ go list -m -f '{{.Dir}}' github.com/egoist/mygo
 - 网络测试使用本地 `httptest`、本地代理或测试替身，不依赖外部下载站点；平台服务优先通过 `deps` 替换。
 - 纯文档变更：核对命令、路径、相对链接及 `git diff --check`，不要求重复构建和生成截图。
 
-快照命令的 Bash 与 PowerShell 写法见 [README 的验证说明](README.md#验证与视觉快照)。生成目录为 `internal/app/testdata/snapshots/`，已被 Git 忽略；UI 有可见变化时按需更新 `docs/screenshot-light.png` 和 `docs/screenshot-dark.png`。
+快照命令的 Bash 与 PowerShell 写法见 [开发指南的验证说明](docs/development.md#验证与视觉快照)。生成目录为 `internal/app/testdata/snapshots/`，已被 Git 忽略；UI 有可见变化时按需更新 `docs/screenshot-light.png` 和 `docs/screenshot-dark.png`。
 
 ## 文档与交付
 

@@ -1,8 +1,12 @@
 # 多连接本地测量
 
-日期：2026-11-22。环境：Windows amd64、Intel Core i9-14900HX（24 核 / 32 逻辑处理器）、Go 1.27.3。服务与客户端同进程，通过本地 `httptest` HTTP 服务通信；无外部下载站点。其他桌面程序仍可能影响结果。
+**本次每响应限速场景中，4 连接吞吐约为单连接的 3.9 倍；不限速场景反而更慢。多连接不保证提速。**
 
-每种场景连续下载 8 个 32 MiB 文件（合计 256 MiB），逐字节核对内容。应用不限速，全局连接上限 16；单连接设为 1，多连接设为 4。分片固定 4 MiB，每个文件另有一次 1 字节能力探测。受限服务按每个响应 8 MiB/s 发送，未限制服务端总带宽。
+## 方法与结果
+
+记录日期：2026-11-22。Windows amd64、Go 1.27.3、Intel Core i9-14900HX（24 核 / 32 逻辑处理器）。客户端与 `httptest` 服务同进程运行，无外部下载。
+
+每场景连续下载 8 个 32 MiB 文件（合计 256 MiB），逐字节核对。应用不限速，全局连接上限 16，单任务分别使用 1 或 4 个连接。多连接每片 4 MiB，每文件另发一次 1 字节探测。受限服务对每个响应限 8 MiB/s，不限制服务端总带宽。
 
 | 场景 | 累计传输耗时（秒） | 吞吐（MiB/s） | 活动请求峰值 | 请求总数 | 进程 CPU（秒） |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -11,34 +15,38 @@
 | 单连接，每响应限 8 MiB/s | 32.1108 | 7.97 | 1 | 8 | 0.3281 |
 | 4 连接，每响应限 8 MiB/s | 8.2205 | 31.14 | 4 | 72 | 0.1875 |
 
-吞吐为总字节数除以各次传输耗时之和，包含任务创建、探测、落盘和最终发布，排除之后的内容对照时间。CPU 使用 Windows `GetProcessTimes` 的内核与用户时间差，包含客户端、本地服务和内容对照；当前环境读数存在量化和零值，因此只报告原始读数，不把 0.0000 当作零开销，也不据此声称节省 CPU。此测量不能区分客户端与测试服务的 CPU 成本。
+耗时包含任务创建、探测、落盘和最终发布，排除内容对照；吞吐按累计耗时计算。CPU 为 Windows `GetProcessTimes` 的内核与用户时间差，包含客户端、服务端和内容对照，读数有量化误差：0.0000 不代表零开销，不能据此推断节省 CPU。
 
-本次单连接受限服务的吞吐约提升至 3.9 倍；不限速服务中分片较慢，额外请求、Sync 与元信息提交有成本。它不代表真实网站、TLS、远程代理、慢盘或其他操作系统的表现，不保证多连接提速。
+结果受本机负载影响，不代表真实网站、TLS、远程代理、慢盘或其他系统的表现。分片增加请求、同步落盘与元信息提交成本。
 
 ## 重现
 
-从仓库根目录执行 PowerShell，脚本仅在 `.mygo/` 写入测试程序与输出，所有下载进入测试临时目录：
+从仓库根目录执行 Windows PowerShell 脚本，各场景使用独立进程：
 
 ```powershell
 ./scripts/measure-download.ps1
 ```
 
-也可直接运行测试（Windows 同时报告进程 CPU；其他系统返回 `cpu_seconds=-1`，可另用系统进程计时工具）：
+程序与输出写入 `.mygo/`，下载写入测试临时目录。也可直接运行测试：
 
 ```powershell
-$env:DOWNLOADER_MEASURE = '1'
-go test -run '^TestLocalTransferMeasurement$' -count=1 -v ./internal/download
-Remove-Item Env:DOWNLOADER_MEASURE
+$previousMeasure = $env:DOWNLOADER_MEASURE
+try {
+    $env:DOWNLOADER_MEASURE = '1'
+    go test -run '^TestLocalTransferMeasurement$' -count=1 -v ./internal/download
+} finally {
+    $env:DOWNLOADER_MEASURE = $previousMeasure
+}
 ```
 
 ```bash
 DOWNLOADER_MEASURE=1 go test -run '^TestLocalTransferMeasurement$' -count=1 -v ./internal/download
 ```
 
-## 正确性范围
+非 Windows 系统的 `cpu_seconds=-1` 表示未测量 CPU。用例见 [measurement_test.go](../internal/download/measurement_test.go)。
 
-自动测试覆盖有效/错误 Range、强/弱 ETag、压缩/未知大小、小文件回退、短读重试、版本变化与完整 200 回退、已提交非连续片段恢复、损坏/未知元信息、Sync/提交失败、源更新区间对照、完成通知与独立 SHA-256、全局/任务连接和带宽上限、HTTP/SOCKS5 代理、跨源认证剥离及暂停/删除/退出取消。限速等待不计作网络停滞。
+## 正确性与兼容
 
-分片模式写入独立 `.part.segments`，`.part.meta` 使用 `schemaVersion=2`、`mode=segments`，记录 URL、最终响应资源、强 ETag、总长度和已提交完整范围。只有数据 Sync 后原子写入的区间可恢复；文件长度本身不表示进度，崩溃可能重下尚未提交的片段。`.part.meta.tmp` 与所有数据路径统一预留。
+自动化测试另覆盖 Range/ETag 校验、单连接回退、短读重试、分片恢复、元信息损坏、提交失败、限速、代理、认证与取消。性能测量本身不替代这些测试。
 
-旧连续 `.part` 保留单连接续传，不会被预分配扩展为稀疏文件。源更新只复用同源同路径、版本长度一致且所有已提交区间逐字节一致的数据；否则先持久化待重置标记，再在继续时清理。降级前完成或清理分片任务并备份记录；旧版本不能恢复分片进度。
+分片数据保存在 `.part.segments`，v2 `.part.meta` 仅恢复同步落盘后原子提交的完整区间；预分配长度不代表进度。旧连续 `.part` 保持单连接续传。使用条件和降级注意事项见 [使用指南](usage.md#数据与续传)。
