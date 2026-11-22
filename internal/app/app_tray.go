@@ -1,7 +1,10 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"time"
+
 	"github.com/egoist/mygo"
 
 	"go-downloader/internal/appinfo"
@@ -32,14 +35,10 @@ type trayState struct {
 	initialized, quitting, sessionEnding bool
 	reason                               string
 	off                                  []func()
+	cancelHost                           context.CancelFunc
 }
 
-func trayPlatformReason(goos string) string {
-	if goos == "windows" {
-		return "Windows 托盘尚待原生验收，关闭窗口将正常退出"
-	}
-	return "此平台尚未完成托盘恢复验收，关闭窗口将正常退出"
-}
+const trayHostUnavailable = "系统托盘不可用，关闭窗口将退出应用。"
 
 // initTray is called once after WhenReady. A creation error must leave ordinary
 // window closing available, even when an older settings file enables the option.
@@ -48,10 +47,6 @@ func (a *app) initTray() {
 		return
 	}
 	a.tray.initialized = true
-	a.tray.reason = a.deps.trayUnavailable
-	if a.tray.reason != "" {
-		return
-	}
 	if a.deps.newTray == nil {
 		a.tray.reason = "托盘服务不可用，关闭窗口将正常退出"
 		return
@@ -64,6 +59,43 @@ func (a *app) initTray() {
 	a.tray.handle = handle
 	a.tray.off = append(a.tray.off, handle.OnClick(a.restoreWindow))
 	a.refreshTray()
+	a.startTrayHostMonitor()
+}
+
+// A Linux indicator can exist without a panel to show it. Probe off the UI
+// thread and restore a hidden window if the panel disappears.
+func (a *app) startTrayHostMonitor() {
+	probe := a.deps.trayHostAvailable
+	if probe == nil {
+		return
+	}
+	a.tray.reason = "正在检测系统托盘…"
+	ctx, cancel := context.WithCancel(a.lifetime)
+	a.tray.cancelHost = cancel
+	a.backgroundJobs.Add(1)
+	a.deps.async(func() {
+		defer a.backgroundJobs.Done()
+		watchTrayHost(ctx, probe, 2*time.Second, func(available bool) {
+			a.dispatch(func() {
+				if ctx.Err() == nil {
+					a.setTrayHostAvailable(available)
+				}
+			})
+		})
+	})
+}
+
+func (a *app) setTrayHostAvailable(available bool) {
+	if a.stopping || a.tray.handle == nil {
+		return
+	}
+	a.tray.reason = ""
+	if !available {
+		a.tray.reason = trayHostUnavailable
+		if a.tray.hidden && !a.tray.quitting {
+			a.restoreWindow()
+		}
+	}
 }
 
 // refreshTray runs on the UI thread, including while its window is hidden.
@@ -152,6 +184,10 @@ func (a *app) quitCanceled() {
 }
 
 func (a *app) stopTray() {
+	if a.tray.cancelHost != nil {
+		a.tray.cancelHost()
+		a.tray.cancelHost = nil
+	}
 	for _, off := range a.tray.off {
 		off()
 	}

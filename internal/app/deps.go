@@ -28,16 +28,16 @@ type deps struct {
 	version      string
 	secrets      store.SecretStore
 
-	now              func() time.Time
-	async            func(func())
-	notify           func(title, body string)
-	canNotify        func() bool
-	appActive        func() bool
-	newTray          func() (trayHandle, error)
-	trayUnavailable  string
-	backgroundWindow func(*mygo.Window) backgroundWindow
-	quit             func()
-	checkForUpdates  func()
+	now               func() time.Time
+	async             func(func())
+	notify            func(title, body string)
+	canNotify         func() bool
+	appActive         func() bool
+	newTray           func() (trayHandle, error)
+	trayHostAvailable func(context.Context) bool
+	backgroundWindow  func(*mygo.Window) backgroundWindow
+	quit              func()
+	checkForUpdates   func()
 
 	pickFolder      func(parent *mygo.Window, title string) (string, error)
 	pickTaskList    func(parent *mygo.Window) (string, error)
@@ -54,7 +54,7 @@ type deps struct {
 // realDeps wires the app to MyGo and the operating system.
 func realDeps() deps {
 	version := appinfo.NormalizeVersion(mygo.App.Version())
-	return deps{
+	d := deps{
 		saveDiagnostics: func(parent *mygo.Window) (string, error) {
 			return mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, Title: "导出本次诊断日志", DefaultPath: "diagnostics.json", Filters: []mygo.FileFilter{{Name: "JSON 日志", Extensions: []string{"json"}}}})
 		},
@@ -62,8 +62,7 @@ func realDeps() deps {
 		readClipboardText: func() ([]byte, error) {
 			return clipboardText(mygo.Clipboard.Formats, func() (transfer.Data, error) { return mygo.Clipboard.Read(transfer.Text) })
 		},
-		version:         version,
-		trayUnavailable: trayPlatformReason(runtime.GOOS),
+		version: version,
 		newTray: func() (trayHandle, error) {
 			return mygo.NewTray(mygo.TrayOptions{ID: "downloads", Icon: resources.IconPNG, ToolTip: appinfo.Name})
 		},
@@ -122,6 +121,10 @@ func realDeps() deps {
 			mygo.Theme.SetSource(themeSource(theme))
 		},
 	}
+	if runtime.GOOS == "linux" {
+		d.trayHostAvailable = statusNotifierHostAvailable
+	}
+	return d
 }
 
 // mygoSecrets adapts MyGo's credential store to the store's interface.

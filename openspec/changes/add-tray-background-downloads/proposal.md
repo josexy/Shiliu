@@ -8,7 +8,7 @@
 
 ## What Changes
 
-- 设置中新增默认关闭的“关闭窗口后继续下载”，仅在托盘创建成功且平台验证通过时生效。
+- 设置中新增默认关闭的“关闭窗口后继续下载”，按运行时托盘可用性生效，不按操作系统名单禁用。
 - 托盘菜单提供恢复窗口、活动数/排队数/总速度、全部暂停、全部继续和退出。
 - 区分窗口关闭与真正退出；退出仍取消任务、保存记录并释放单实例资源，通知和第二实例能够恢复窗口。
 
@@ -26,7 +26,7 @@
 
 ## Impact
 
-`internal/app/run.go`、`app.go`、`deps.go`、`view_settings.go`、`internal/settings` 及测试；复用 MyGo 0.10.0 托盘与窗口 API，无新增运行依赖。
+`internal/app/run.go`、`app.go`、`deps.go`、`view_settings.go`、`internal/settings` 及测试；复用 MyGo 0.10.0 托盘与窗口 API，新增纯 Go 依赖 `github.com/godbus/dbus/v5` 用于 Linux 托盘宿主检测。
 
 实施依赖：无硬依赖；建议作为第二阶段首项。
 

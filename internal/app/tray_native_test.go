@@ -34,8 +34,6 @@ func TestMain(_ *testing.M) {
 	var server *httptest.Server
 	err = run(func() deps {
 		d := realDeps()
-		// Only this isolated harness enables the platform awaiting acceptance.
-		d.trayUnavailable = ""
 		d.dataDir = dir
 		d.defaultDir = filepath.Join(dir, "downloads")
 		d.secrets = nil

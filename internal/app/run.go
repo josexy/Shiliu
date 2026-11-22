@@ -41,6 +41,11 @@ func run(makeDeps func() deps) error {
 	mygo.App.OnNotificationClick(func(string) {
 		a.restoreWindow()
 	})
+	mygo.App.OnActivate(func(hasVisibleWindows bool) {
+		if !hasVisibleWindows {
+			a.restoreWindow()
+		}
+	})
 	mygo.App.WhenReady(a.start)
 	mygo.App.OnBeforeQuit(a.beforeQuit)
 	mygo.App.OnQuitCanceled(a.quitCanceled)

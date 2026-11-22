@@ -4,7 +4,7 @@
 
 动机与范围见 [proposal.md](proposal.md)，行为约束见 [spec.md](specs/tray-background-downloads/spec.md)。
 
-`run.go` 在 OnBeforeQuit 调用幂等 shutdown；`app.go` 的 startSaver 每两秒保存、刷新文件。第二实例和通知已执行 Show/Focus。MyGo 0.10.0 的 `modules.go` 提供 NewTray/Menu，`window.go` 提供 OnClose/Hide/Show，`app.go` 提供 OnQuitCanceled。Linux 托盘依赖 libayatana-appindicator3，创建成功仍不等价于桌面可恢复；本次只核实源码，未实测原生行为。
+`run.go` 在 OnQuit 调用幂等 shutdown，OnBeforeQuit 区分普通退出与系统会话结束；`app.go` 的 startSaver 每两秒保存、刷新文件。第二实例和通知已执行 Show/Focus。MyGo 0.10.0 的 `modules.go` 提供 NewTray/Menu，`window.go` 提供 OnClose/Hide/Show，`app.go` 提供 OnQuitCanceled。Linux 托盘依赖 libayatana-appindicator3，创建成功仍不等价于桌面存在可显示图标的宿主。
 
 实施顺序：无硬依赖；建议作为第二阶段首项。
 
@@ -22,7 +22,7 @@
 
 ### 2. 核心执行方式
 
-设置 `CloseToTray` 默认 false。Windows 首期启用需完成原生验收；macOS/Linux 适配与实测作为分平台任务，未通过的平台关闭该选项并给出原因。创建失败始终保留正常关闭，禁止仅凭 GOOS 隐藏窗口。菜单总是提供恢复与退出，不依赖双击或 tooltip。
+设置 `CloseToTray` 默认 false。各平台均尝试创建 MyGo 托盘，创建失败保留正常关闭。Linux 在后台通过 D-Bus 查询 `org.kde.StatusNotifierWatcher.IsStatusNotifierHostRegistered`，每两秒刷新一次，查询设一秒超时；确认宿主可用后允许隐藏。宿主丢失时恢复主窗口，宿主恢复时重新启用设置。检测随应用或托盘退出取消，结果通过 `Window.Update` 发布。菜单总是提供恢复与退出，不依赖双击或 tooltip。
 
 ### 3. 一致性与边界
 
@@ -34,15 +34,15 @@ OnBeforeQuit 只标记 quitting，普通退出的不可逆 shutdown 放在不可
 
 ### 5. 集成与验证
 
-新增设置控件使用持久字段和稳定 c.Key；派生勾选值在操作回调写回，通知和第二实例复用统一 restoreWindow。与新增调度结合时托盘 ResumeAll 仍由引擎遵守时间条件。
+新增设置控件使用持久字段和稳定 c.Key；派生勾选值在操作回调写回，通知、第二实例和 macOS Dock 激活复用统一 restoreWindow。与新增调度结合时托盘 ResumeAll 仍由引擎遵守时间条件。
 
 ## Risks / Trade-offs
 
-- Linux 托盘宿主缺失但图标创建成功 → 未经真实桌面验证不开放隐藏模式，提供直接退出的退化路径。
+- Linux 托盘宿主缺失但图标创建成功 → 运行时检测已注册的 StatusNotifierHost；仅有旧 XEmbed 托盘且无此宿主的桌面保留正常关闭，不启用隐藏。
 - 退出钩子顺序误将退出拦截 → 假服务覆盖 OnBeforeQuit/OnClose 顺序与幂等清理，原生系统复核关闭和注销。
 
 ## Migration Plan
 
-新增设置字段缺失即关闭；升级不改变旧用户关闭习惯。关闭功能可直接恢复原退出流程，不改下载记录格式。平台验证失败时只撤回该平台入口，不移除或更改下载数据。
+新增设置字段缺失即关闭；升级不改变旧用户关闭习惯。关闭功能或运行时托盘不可用时恢复原退出流程，不改下载记录格式，不移除或更改下载数据。
 
 先执行针对性用例，再执行全量测试与 MyGo 静态检查；界面变化检查两套主题、960×640 和 125% 缩放。平台服务以 deps 替身测试，原生行为另记真实验证范围。发布后更新 README 与 roadmap；本提案阶段不变更应用版本。

@@ -1,6 +1,6 @@
 # 原生功能验收
 
-记录日期：2026-11-22。拖放与剪贴板已完成下述 Windows 手工检查，托盘验收未完成。
+记录日期：2026-11-22。拖放与剪贴板已完成下述 Windows 手工检查；Windows 系统托盘由用户手工确认可用，已开放入口。
 
 ## 拖放与剪贴板
 
@@ -37,11 +37,15 @@ go test -tags dropcheck -c -o .mygo/drop-check.exe ./internal/app
 
 | 平台 | 验收状态 | 当前行为 |
 | --- | --- | --- |
-| Windows/amd64 | 隔离实例已启动；关闭、恢复、退出、通知与第二实例检查尚未完成 | 后台模式禁用，关闭窗口退出 |
-| macOS | 未实机验收 | 后台模式禁用，关闭窗口退出 |
-| Linux（有/无托盘宿主） | 未实机验收 | 后台模式禁用，关闭窗口退出 |
+| Windows/amd64 | 用户手工确认系统托盘可用（2026-11-22） | 已开放托盘；可选择关闭窗口后继续下载 |
+| macOS | 原生桌面交互未实测 | 托盘创建成功后可关闭到菜单栏；Dock 激活恢复主窗口 |
+| Linux（有/无托盘宿主） | 原生桌面交互未实测 | 创建托盘并检测已注册宿主；无宿主正常关闭，宿主消失恢复主窗口 |
 
-替身测试覆盖创建失败、平台退化、隐藏/恢复、菜单与退出清理。后续检查项见 [迭代计划](roadmap.md#托盘与后台下载)。
+Windows 托盘可用性由用户手工确认。通知点击、第二实例恢复、系统注销/关机及其他系统版本/架构仍需补充逐项原生记录；这些记录不作为按平台禁用功能的条件。
+
+替身测试覆盖托盘创建成功/失败、宿主检测等待、丢失与恢复、取消及晚回调、菜单与退出清理，`ui.Tester` 覆盖设置持久化与键盘焦点。Linux 宿主检测通过 `github.com/godbus/dbus/v5` 查询已注册的 StatusNotifierHost，不依赖外部命令，也不启动额外会话总线。后续检查项见 [迭代计划](roadmap.md#托盘与后台下载)。
+
+已通过托盘相关测试、`go test ./...`、`go tool mygo vet .`、`CGO_ENABLED=0` 全量测试，以及 Windows/macOS/Linux 的 amd64/arm64 交叉编译；已检查 960×640、125% 缩放下浅/深主题的设置快照。在 WSL Ubuntu 的独立 D-Bus 会话中实测查询宿主未注册、注册、注销、服务退出及取消，均通过；此项是协议测试，不等同于桌面托盘交互测试。
 
 从仓库根目录编译并运行隔离程序：
 
@@ -50,6 +54,12 @@ go test -tags nativecheck -c -o .mygo/tray-check.exe ./internal/app
 ./.mygo/tray-check.exe
 ```
 
-该程序单独开启待验收功能，使用本地 HTTP 服务及 `.mygo/tray-native-data/`。检查普通关闭继续下载、托盘恢复/暂停/继续/退出、第二实例恢复；通知样例等待数据目录中的 `complete-notification` 文件出现后完成。
+该程序沿用正式应用的托盘可用性检测，使用本地 HTTP 服务及 `.mygo/tray-native-data/`。检查普通关闭继续下载、托盘恢复/暂停/继续/退出、第二实例恢复；通知样例等待数据目录中的 `complete-notification` 文件出现后完成。
+
+Linux 的 D-Bus 协议测试在隔离会话总线内运行，不连接桌面已有的托盘宿主：
+
+```sh
+SHILIU_DBUS_TEST=1 dbus-run-session -- go test -run '^TestStatusNotifierHostSessionBus$' ./internal/app
+```
 
 两个验收程序均不使用正常应用数据，不进入普通构建；程序、测试数据和日志位于 Git 忽略的 `.mygo/`。

@@ -36,6 +36,8 @@ func TestTrayCreationFailureAndOldSettings(t *testing.T) {
 		t.Fatal("old settings changed closing behavior")
 	}
 	a.s.CloseToTray = true
+	window := &fakeBackgroundWindow{}
+	a.bindBackgroundWindow(window)
 	calls := 0
 	a.deps.newTray = func() (trayHandle, error) { calls++; return nil, errors.New("unavailable") }
 	a.initTray()
@@ -43,6 +45,12 @@ func TestTrayCreationFailureAndOldSettings(t *testing.T) {
 	if calls != 1 || a.tray.handle != nil || a.tray.reason == "" {
 		t.Fatal("tray failure did not disable background mode")
 	}
+	event := &mygo.CloseEvent{}
+	window.close(event)
+	if event.DefaultPrevented() || window.hidden {
+		t.Fatal("tray failure prevented normal window closing")
+	}
+	defer a.stopTray()
 	if err := a.store.SaveSettings(a.s); err != nil {
 		t.Fatal(err)
 	}
@@ -267,19 +275,32 @@ func TestShutdownCancelsProxyBackgroundJobs(t *testing.T) {
 	}
 }
 
-func TestUnverifiedPlatformsKeepNormalClose(t *testing.T) {
-	for _, platform := range []string{"windows", "darwin", "linux"} {
-		t.Run(platform, func(t *testing.T) {
+func TestTrayRuntimeAvailability(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		create    func() (trayHandle, error)
+		available bool
+	}{
+		{"created", func() (trayHandle, error) { return &fakeTray{}, nil }, true},
+		{"creation error", func() (trayHandle, error) { return nil, errors.New("no tray") }, false},
+		{"missing handle", func() (trayHandle, error) { return nil, nil }, false},
+		{"missing service", nil, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			a := newTestApp(t, &fakeEngine{})
 			a.s.CloseToTray = true
-			a.deps.trayUnavailable = trayPlatformReason(platform)
-			a.deps.newTray = func() (trayHandle, error) { t.Fatal("unverified platform created tray"); return nil, nil }
-			a.bindBackgroundWindow(&fakeBackgroundWindow{})
+			a.deps.newTray = test.create
+			window := &fakeBackgroundWindow{}
+			a.bindBackgroundWindow(window)
 			a.initTray()
+			defer a.stopTray()
 			event := &mygo.CloseEvent{}
-			a.onWindowClose(event)
-			if event.DefaultPrevented() || a.tray.reason == "" {
-				t.Fatal("unverified platform hid the window")
+			window.close(event)
+			if (a.tray.handle != nil) != test.available || (a.tray.reason == "") != test.available {
+				t.Fatalf("tray availability: handle=%v reason=%q", a.tray.handle, a.tray.reason)
+			}
+			if event.DefaultPrevented() != test.available || window.hidden != test.available {
+				t.Fatalf("window closing: prevented=%v hidden=%v", event.DefaultPrevented(), window.hidden)
 			}
 		})
 	}
@@ -317,4 +338,60 @@ func TestCloseToTraySettingPersistsAndRetainsFocus(t *testing.T) {
 		t.Fatal("reopening settings lost the value")
 	}
 	a.stopTray()
+}
+
+func TestTrayHostLossRestoresHiddenWindow(t *testing.T) {
+	engine := &fakeEngine{items: sampleItems()}
+	a := newTestApp(t, engine)
+	a.s.CloseToTray = true
+	a.deps.newTray = func() (trayHandle, error) { return &fakeTray{}, nil }
+	window := &fakeBackgroundWindow{}
+	a.bindBackgroundWindow(window)
+	a.initTray()
+	defer a.stopTray()
+	for _, available := range []bool{false, true, false, true} {
+		a.setTrayHostAvailable(available)
+		if window.hidden {
+			t.Fatal("host change left the window hidden")
+		}
+		event := &mygo.CloseEvent{}
+		window.close(event)
+		if event.DefaultPrevented() != available || window.hidden != available {
+			t.Fatalf("host=%v: prevented=%v hidden=%v", available, event.DefaultPrevented(), window.hidden)
+		}
+	}
+	if window.shown != 1 || window.focused != 1 || engine.hasCall("PauseAll") || engine.hasCall("Shutdown") {
+		t.Fatal("host loss must restore the original window without stopping downloads")
+	}
+	a.stopTray()
+	a.setTrayHostAvailable(false)
+	if window.shown != 1 {
+		t.Fatal("late host update restored a stopped tray")
+	}
+}
+
+func TestTrayHostMonitorPendingAndCancellation(t *testing.T) {
+	a := newTestApp(t, &fakeEngine{})
+	a.s.CloseToTray = true
+	a.deps.newTray = func() (trayHandle, error) { return &fakeTray{}, nil }
+	var worker func()
+	a.deps.async = func(fn func()) { worker = fn }
+	a.deps.trayHostAvailable = func(context.Context) bool {
+		t.Fatal("canceled monitor called the host probe")
+		return true
+	}
+	window := &fakeBackgroundWindow{}
+	a.bindBackgroundWindow(window)
+	a.initTray()
+	if worker == nil || a.tray.reason == "" {
+		t.Fatal("host detection was not scheduled")
+	}
+	event := &mygo.CloseEvent{}
+	window.close(event)
+	if event.DefaultPrevented() || window.hidden {
+		t.Fatal("unconfirmed host allowed hiding the window")
+	}
+	a.stopTray()
+	worker()
+	a.backgroundJobs.Wait()
 }

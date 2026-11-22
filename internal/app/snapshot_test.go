@@ -376,7 +376,7 @@ func TestSnapshots(t *testing.T) {
 		save(name+"-compact-125-rate-limit.png", featureTester)
 		featureTester.Wheel(600, 400, 0, 600)
 		featureTester.Advance(500 * time.Millisecond)
-		features.tray.reason = trayPlatformReason("windows")
+		features.tray.reason = trayHostUnavailable
 		featureTester.Frame()
 		save(name+"-compact-125-tray-unavailable.png", featureTester)
 		features.tray.reason = ""
