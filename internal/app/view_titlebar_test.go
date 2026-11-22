@@ -69,9 +69,13 @@ func TestTitleBarWindowActions(t *testing.T) {
 			}
 			modal = true
 			tt.Frame()
-			if err := tt.Click("关闭窗口"); err != nil {
-				t.Fatal(err)
+			// Click checks reachability in MyGo 0.10. Use actual coordinates
+			// to exercise the modal backdrop intercepting the caption click.
+			closeBounds, ok := tt.Find("关闭窗口")
+			if !ok {
+				t.Fatal("close control missing")
 			}
+			tt.ClickAt(closeBounds.X+closeBounds.W/2, closeBounds.Y+closeBounds.H/2)
 			if window.closed != 0 {
 				t.Fatal("a modal let a click reach the window close button")
 			}
