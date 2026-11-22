@@ -5,6 +5,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"go-downloader/internal/appinfo"
 	"go-downloader/resources"
 )
 
@@ -18,7 +19,7 @@ var appIcon = func() *ui.Bitmap {
 }()
 
 func appLogo(c *ui.Context, size float32) {
-	ui.Image(c, appIcon).Size(size, size).Shrink(0).Label("下载器图标")
+	ui.Image(c, appIcon).Size(size, size).Shrink(0).Label(appinfo.Name + "图标")
 }
 
 // svgIcon builds a 24×24 stroke icon from its shapes, in the color of the text

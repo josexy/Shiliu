@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+
+	"go-downloader/internal/appinfo"
 )
 
 func (a *app) advancedModal(c *ui.Context) {
@@ -66,7 +68,7 @@ func (a *app) advancedModal(c *ui.Context) {
 				})
 				ui.Field(c, "其他请求头（可选）", func() {
 					c.Key("advanced-headers")
-					ui.TextArea(c, &a.advanced.headers).Height(78).Label("自定义请求头").Placeholder("每行一个，例如 User-Agent: Downloader")
+					ui.TextArea(c, &a.advanced.headers).Height(78).Label("自定义请求头").Placeholder("每行一个，例如 User-Agent: " + appinfo.Product)
 				})
 				ui.Text(c, "请求头仅在本次运行中保留；重启后可用同一链接补填，已有进度会保留。更新已有任务时沿用原保存路径。").FontSize(12).TextColor(p.Muted)
 				a.scheduleFields(c, "advanced", &a.advanced.schedule)

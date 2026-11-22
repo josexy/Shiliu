@@ -46,7 +46,7 @@ func TestSnapshots(t *testing.T) {
 	engine.items = sampleItems()
 	a := newTestApp(t, engine)
 	a.s.DownloadDir = filepath.FromSlash("C:/Users/Ada/Downloads")
-	a.deps.dataDir = filepath.FromSlash("C:/Users/Ada/AppData/Roaming/Downloader")
+	a.deps.dataDir = filepath.FromSlash("C:/Users/Ada/AppData/Roaming/拾流")
 	a.system = &proxy.System{
 		Source: "Windows 系统代理",
 		HTTP:   &proxy.Endpoint{Kind: proxy.KindHTTP, Host: "127.0.0.1", Port: 7890},

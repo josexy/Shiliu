@@ -26,9 +26,19 @@ go tool mygo build
 
 | 平台 | 主要产物 |
 | --- | --- |
-| Windows | `Downloader.exe`、`downloader-setup-<版本>-<架构>.exe` |
-| macOS | `Downloader.app`、`.dmg` |
-| Linux | 可执行文件、安装归档、`.deb`、`.rpm`、`PKGBUILD` |
+| Windows | `拾流.exe`、`shiliu-setup-<版本>-<架构>.exe` |
+| macOS | `拾流.app`、`shiliu-<版本>-<架构>.dmg`（universal 无架构后缀） |
+| Linux | `shiliu`、安装归档、`.deb`、`.rpm`、`PKGBUILD` |
+
+配置遵循 [MyGo 配置规范](https://mygo.egoist.dev/docs/configuration)，并以当前锁定的 v0.10.0 实现为准。原生应用使用 `mygo.json`，无需 TypeScript 配置或前端构建字段：
+
+- `name` 为「拾流」，用于可执行文件、应用菜单和安装器；`slug` 显式固定为 `shiliu`，用于 ASCII 包名。
+- `identifier` 为 `io.github.josexy.shiliu`；发布后保持此标识和 slug 稳定。旧的 `com.example.downloader` 是模板占位标识，旧安装包不会被识别为同一产品；使用新版前请退出旧版。
+- 版权沿用 LICENSE 中的 joxrays，`license` 为 `MIT`；Windows 发布者从版权信息推导，安装目录名为 `Shiliu`。
+- 保留 `linux.webview: false`，原生 UI 不需要 WebKitGTK；`resourcesExclude` 排除图标设计原稿。
+- 应用内展示名称与 HTTP User-Agent 统一在 `internal/appinfo`；改名时同步维护 `mygo.json`。
+
+数据兼容：安装版优先使用「拾流」目录；该目录不存在而旧 `Downloader` 目录存在时继续使用旧目录及原凭据服务，不搬移或覆盖文件。`mygo dev` 对应「拾流 Dev」/`Downloader Dev`，直接 `go run .` 对应「拾流 Local」/`go-downloader`，彼此隔离。系统权限、旧安装器注册信息不会迁移。
 
 跨平台打包：
 
@@ -50,7 +60,7 @@ macOS 签名与 `.dmg` 制作需要 macOS。Windows 安装包需要 NSIS，MyGo 
 
 `resources/` 存放资源，`scripts/` 存放生成与测量脚本，`docs/` 存放使用、验收和测量文档。协作规范见 [AGENTS.md](../AGENTS.md)；UI 开发另见 [MyGo 维护技能](../.agents/skills/mygo-maintenance/SKILL.md)。
 
-图标由 `python scripts/make-icon.py` 生成到 `resources/icon.png`，需要 Pillow；更新后重新构建应用。
+图标原稿为 `resources/design/icon-source.png`，由内置 ImageGen 生成，提示词见同目录的 `icon-prompt.txt`。运行 `python scripts/make-icon.py`（需要 Pillow）可重建 1024×1024 RGBA 的 `resources/icon.png`，保留透明边缘。UI、托盘和 MyGo 打包共享此文件；更新后重新构建应用。设计目录不随应用分发。
 
 ## 验证与视觉快照
 

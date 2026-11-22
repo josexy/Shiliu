@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/egoist/mygo/ui"
 
+	"go-downloader/internal/appinfo"
 	"go-downloader/internal/proxy"
 	"go-downloader/internal/settings"
 )
@@ -333,7 +334,7 @@ func (a *app) settingsAbout(c *ui.Context) {
 	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 		appLogo(c, 52)
 		ui.Column(c).Gap(2).Children(func() {
-			ui.Text(c, "下载器").FontSize(17).Bold()
+			ui.Text(c, appinfo.Name+" · "+appinfo.Product).FontSize(17).Bold()
 			ui.Text(c, "版本 "+a.deps.version).FontSize(13).TextColor(p.Muted)
 		})
 	})

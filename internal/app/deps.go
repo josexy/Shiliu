@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -62,11 +63,11 @@ func realDeps() deps {
 		version:         version,
 		trayUnavailable: trayPlatformReason(runtime.GOOS),
 		newTray: func() (trayHandle, error) {
-			return mygo.NewTray(mygo.TrayOptions{ID: "downloads", Icon: resources.IconPNG, ToolTip: "下载器"})
+			return mygo.NewTray(mygo.TrayOptions{ID: "downloads", Icon: resources.IconPNG, ToolTip: appinfo.Name})
 		},
 		backgroundWindow: func(w *mygo.Window) backgroundWindow { return w },
 		quit:             mygo.App.Quit,
-		secrets:          mygoSecrets{},
+		secrets:          appSecrets(),
 		now:              time.Now,
 		async:            func(fn func()) { go fn() },
 		notify: func(title, body string) {
@@ -121,20 +122,30 @@ func realDeps() deps {
 }
 
 // mygoSecrets adapts MyGo's credential store to the store's interface.
-type mygoSecrets struct{}
+type mygoSecrets struct{ service string }
 
-func (mygoSecrets) Get(key string) (string, error) {
-	value, err := mygo.Secrets.Get(key)
+func appSecrets() mygoSecrets {
+	// Continue using the same credential namespace when reusing legacy data.
+	root, err := mygo.App.Path(mygo.PathAppData)
+	if err != nil {
+		return mygoSecrets{}
+	}
+	dir := legacyDataDir(root, mygo.App.Name())
+	return mygoSecrets{service: legacySecretService(filepath.Base(dir))}
+}
+
+func (s mygoSecrets) Get(key string) (string, error) {
+	value, err := mygo.Secrets.Service(s.service).Get(key)
 	if err != nil {
 		return "", err
 	}
 	return string(value), nil
 }
 
-func (mygoSecrets) Set(key, value string) error {
-	return mygo.Secrets.Set(key, []byte(value))
+func (s mygoSecrets) Set(key, value string) error {
+	return mygo.Secrets.Service(s.service).Set(key, []byte(value))
 }
 
-func (mygoSecrets) Delete(key string) error {
-	return mygo.Secrets.Delete(key)
+func (s mygoSecrets) Delete(key string) error {
+	return mygo.Secrets.Service(s.service).Delete(key)
 }

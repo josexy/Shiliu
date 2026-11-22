@@ -26,7 +26,7 @@ func TestBuildVersionReachesAboutAndRequests(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mygo.App.SetVersion(tc.version)
-			wantAgent := "Downloader/" + tc.want + " (MyGo)"
+			wantAgent := "Shiliu/" + tc.want + " (MyGo)"
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if got := r.UserAgent(); got != wantAgent {
 					t.Errorf("%s User-Agent = %q, want %q", r.URL.Path, got, wantAgent)
@@ -47,7 +47,7 @@ func TestBuildVersionReachesAboutAndRequests(t *testing.T) {
 				}
 			})
 			a.openSettings(3)
-			if tt := testerFor(a); !tt.HasText("版本 " + tc.want) {
+			if tt := testerFor(a); !tt.HasText("拾流 · Shiliu") || !tt.HasText("版本 "+tc.want) {
 				t.Fatalf("About page has no version %q: %q", tc.want, tt.Texts())
 			}
 

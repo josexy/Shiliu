@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"go-downloader/internal/appinfo"
 	"go-downloader/internal/download"
 	"go-downloader/internal/settings"
 )
@@ -79,7 +80,7 @@ func (a *app) header(c *ui.Context, summary download.Summary) {
 		ui.Row(c).Grow(1).Padding(0, 20).Gap(12).AlignItems(ui.Center).Children(func() {
 			appLogo(c, 36)
 			ui.Column(c).Gap(3).Children(func() {
-				ui.Text(c, "下载器").FontSize(17).Bold()
+				ui.Text(c, appinfo.Name).FontSize(17).Bold()
 				ui.Text(c, headerSubtitle(summary)).FontSize(12).TextColor(p.Muted)
 			})
 			ui.Spacer(c)

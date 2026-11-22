@@ -16,6 +16,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"go-downloader/internal/appinfo"
 	"go-downloader/internal/diagnostics"
 	"go-downloader/internal/download"
 	"go-downloader/internal/proxy"
@@ -216,7 +217,7 @@ func (a *app) load() {
 	}
 	if a.deps.dataDir == "" {
 		if config, err := os.UserConfigDir(); err == nil {
-			a.deps.dataDir = filepath.Join(config, "Downloader")
+			a.deps.dataDir = filepath.Join(config, appinfo.Name)
 		}
 	}
 	if a.deps.dataDir == "" {
@@ -274,7 +275,7 @@ func (a *app) start() {
 	}
 	a.deps.applyTheme(a.s.Theme)
 	a.win = mygo.NewWindow(mygo.WindowOptions{
-		Title:             "下载器",
+		Title:             appinfo.Name,
 		Width:             1200,
 		Height:            800,
 		MinWidth:          960,

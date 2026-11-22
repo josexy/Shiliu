@@ -5,16 +5,23 @@ import (
 	"github.com/egoist/mygo"
 	// MyGo's own controls, menus and dialogs in Simplified Chinese.
 	_ "github.com/egoist/mygo/locales/zh-Hans"
+
+	"go-downloader/internal/appinfo"
 )
 
 // Run initializes and runs the desktop application on the main goroutine.
 func Run() error {
+	// Plain go run builds also have a stable name and stay apart from releases.
+	if !mygo.App.IsPackaged() {
+		mygo.App.SetName(appinfo.Name + " Local")
+	}
 	return run(realDeps)
 }
 
 // run keeps native startup on the caller's main goroutine. The dependency
 // factory also permits isolated native acceptance runs without user data.
 func run(makeDeps func() deps) error {
+	useLegacyDataDir()
 	if !mygo.App.RequestSingleInstanceLock() {
 		return nil // the running instance comes to the front
 	}

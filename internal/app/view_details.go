@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"go-downloader/internal/appinfo"
 	"go-downloader/internal/download"
 )
 
@@ -180,7 +181,7 @@ func taskRateLabel(rate int64) string {
 
 func taskDiagnostic(it download.Item, now time.Time) string {
 	var text strings.Builder
-	fmt.Fprintf(&text, "下载器任务诊断\n任务 ID: %s\n文件名: %s\n", it.ID, it.FileName)
+	fmt.Fprintf(&text, "%s任务诊断\n任务 ID: %s\n文件名: %s\n", appinfo.Name, it.ID, it.FileName)
 	for _, field := range taskDetailFields(it, now) {
 		fmt.Fprintf(&text, "%s: %s\n", field.label, field.value)
 	}

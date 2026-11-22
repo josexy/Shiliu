@@ -3,6 +3,8 @@ package app
 import (
 	"fmt"
 	"github.com/egoist/mygo"
+
+	"go-downloader/internal/appinfo"
 )
 
 // Tray and window adapters are main-thread-owned. No UI build value or Context
@@ -76,7 +78,7 @@ func (a *app) refreshTray() {
 		speed = "0 B/s"
 	}
 	label := fmt.Sprintf("活动 %d · 排队 %d · %s", max(0, summary.Active-summary.Queued), summary.Queued, speed)
-	a.tray.handle.SetToolTip("下载器 · " + label)
+	a.tray.handle.SetToolTip(appinfo.Name + " · " + label)
 	a.tray.handle.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 		{ID: "restore", Label: "恢复窗口", Click: func(*mygo.MenuItem, *mygo.Window) { a.restoreWindow() }},
 		{ID: "summary", Label: label, Disabled: true}, mygo.Separator(),
@@ -92,7 +94,7 @@ func (a *app) refreshTray() {
 				a.refreshTray()
 			}
 		}}, mygo.Separator(),
-		{ID: "quit", Label: "退出下载器", Click: func(*mygo.MenuItem, *mygo.Window) { a.requestQuit() }},
+		{ID: "quit", Label: "退出" + appinfo.Name, Click: func(*mygo.MenuItem, *mygo.Window) { a.requestQuit() }},
 	}))
 }
 

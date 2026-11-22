@@ -1,16 +1,19 @@
 {
-  "name": "Downloader",
-  "slug": "downloader",
-  "identifier": "com.example.downloader",
+  "name": "拾流",
+  "slug": "shiliu",
+  "identifier": "io.github.josexy.shiliu",
   "version": "0.1.0",
+  "copyright": "Copyright (c) 2026 joxrays",
+  "license": "MIT",
   "icon": "resources/icon.png",
   "out": "build",
+  "resourcesExclude": ["design"],
   "windows": {
-    "displayName": "下载器"
+    "installDirName": "Shiliu"
   },
   "linux": {
     "webview": false,
     "categories": ["Utility", "Network"],
-    "comment": "高速原生下载管理器"
+    "comment": "拾流 · HTTP/HTTPS 下载管理器"
   }
 }
