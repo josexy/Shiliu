@@ -40,6 +40,24 @@ type Item struct {
 	// Total is the size in bytes, or -1 when the server does not say.
 	Total int64
 	Done  int64
+	// TaskRateLimit is an additional per-task bytes/second ceiling; 0 is unlimited.
+	TaskRateLimit      int64
+	ConnectionLimit    int
+	TransferMode       string
+	FallbackReason     string
+	ActiveConnections  int
+	WaitingConnections int
+	NetworkBytes       int64
+	ExpectedSHA256     string
+	VerificationState  VerificationState
+	VerificationQueued bool
+	VerificationDone   int64
+	VerificationTotal  int64
+	VerificationError  string
+	LastVerification   VerificationResult
+	SourceRevision     uint64
+	SourceReset        bool
+	SourceUpdating     bool
 	// Speed is bytes per second over the last samples.
 	Speed float64
 	ETA   time.Duration
@@ -87,20 +105,27 @@ type Summary struct {
 
 // Record is how a download is saved and restored.
 type Record struct {
-	ID              string    `json:"id"`
-	URL             string    `json:"url"`
-	FileName        string    `json:"fileName"`
-	Path            string    `json:"path"`
-	State           State     `json:"state"`
-	Total           int64     `json:"total"`
-	Done            int64     `json:"done"`
-	ETag            string    `json:"etag,omitempty"`
-	LastModified    string    `json:"lastModified,omitempty"`
-	Resumable       bool      `json:"resumable"`
-	ResumableKnown  bool      `json:"resumableKnown,omitempty"`
-	CustomName      bool      `json:"customName,omitempty"`
-	HeadersRequired bool      `json:"headersRequired,omitempty"`
-	RetryCount      int       `json:"retryCount,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	FinishedAt      time.Time `json:"finishedAt,omitempty"`
+	ID               string             `json:"id"`
+	URL              string             `json:"url"`
+	FileName         string             `json:"fileName"`
+	Path             string             `json:"path"`
+	State            State              `json:"state"`
+	Total            int64              `json:"total"`
+	Done             int64              `json:"done"`
+	TaskRateLimit    int64              `json:"taskRateLimit,omitempty"`
+	ExpectedSHA256   string             `json:"expectedSHA256,omitempty"`
+	LastVerification VerificationResult `json:"lastVerification,omitzero"`
+	SourceRevision   uint64             `json:"sourceRevision,omitempty"`
+	SourceReset      bool               `json:"sourceReset,omitempty"`
+	ConnectionLimit  int                `json:"connectionLimit,omitempty"`
+	TransferMode     string             `json:"transferMode,omitempty"`
+	ETag             string             `json:"etag,omitempty"`
+	LastModified     string             `json:"lastModified,omitempty"`
+	Resumable        bool               `json:"resumable"`
+	ResumableKnown   bool               `json:"resumableKnown,omitempty"`
+	CustomName       bool               `json:"customName,omitempty"`
+	HeadersRequired  bool               `json:"headersRequired,omitempty"`
+	RetryCount       int                `json:"retryCount,omitempty"`
+	CreatedAt        time.Time          `json:"createdAt"`
+	FinishedAt       time.Time          `json:"finishedAt,omitempty"`
 }

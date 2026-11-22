@@ -18,10 +18,13 @@ import (
 // AddOptions configures one advanced download. Headers stay in memory and are
 // never included in Item, Record, or partial-file metadata.
 type AddOptions struct {
-	URL      string
-	Dir      string
-	FileName string
-	Headers  http.Header
+	URL             string
+	Dir             string
+	FileName        string
+	Headers         http.Header
+	TaskRateLimit   int64
+	ExpectedSHA256  string
+	ConnectionLimit int // 0 inherits the new-task default; otherwise 1–8
 }
 
 // ParseHeaders reads one Name: value header per line. Protocol headers affecting
@@ -73,6 +76,18 @@ func validateHeaders(input http.Header) (http.Header, error) {
 // credentials to the same stopped task without discarding its partial data.
 // Directory checks perform I/O, so callers should run this off the UI thread.
 func (m *Manager) AddTask(opts AddOptions) (string, error) {
+	if opts.ConnectionLimit != 0 {
+		if err := validateConnections(opts.ConnectionLimit, 8); err != nil {
+			return "", err
+		}
+	}
+	if err := validateTaskRateLimit(opts.TaskRateLimit); err != nil {
+		return "", err
+	}
+	expected, err := NormalizeSHA256(opts.ExpectedSHA256)
+	if err != nil {
+		return "", err
+	}
 	target, err := parseTarget(strings.TrimSpace(opts.URL))
 	if err != nil {
 		return "", fmt.Errorf("请输入一条有效的 HTTP/HTTPS 链接")
@@ -98,19 +113,10 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 		dir = m.dir
 		m.mu.Unlock()
 	}
-	dir, err = filepath.Abs(dir)
+	dir, err = writableDirectory(dir)
 	if err != nil {
-		return "", fmt.Errorf("保存目录无效：%w", err)
+		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("无法创建保存目录：%w", err)
-	}
-	probe, err := os.CreateTemp(dir, ".downloader-check-*")
-	if err != nil {
-		return "", fmt.Errorf("保存目录不可写：%w", err)
-	}
-	probe.Close()
-	_ = os.Remove(probe.Name())
 
 	m.mu.Lock()
 	if m.closed {
@@ -125,7 +131,7 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 		}
 	}
 	if selected != nil {
-		if selected.working || selected.item.State.Active() {
+		if selected.working || selected.item.State.Active() || selected.sourceCommitting {
 			m.mu.Unlock()
 			return "", fmt.Errorf("相同链接的任务正在运行，请先暂停后再更新")
 		}
@@ -134,6 +140,7 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 			return "", fmt.Errorf("请补填此任务需要的请求头")
 		}
 		// Existing paths are deliberately preserved when refreshing credentials.
+		invalidateSourceLocked(selected)
 		selected.headers = headers
 		if target.user != "" {
 			selected.user, selected.pass = target.user, target.pass
@@ -153,6 +160,14 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 		m.byID[selected.item.ID] = selected
 	}
 	selected.item.State = StatePaused
+	if opts.ConnectionLimit != 0 {
+		selected.item.ConnectionLimit = opts.ConnectionLimit
+	} else if selected.item.ConnectionLimit == 0 {
+		selected.item.ConnectionLimit = m.defaultConnections
+	}
+	selected.item.TaskRateLimit = opts.TaskRateLimit
+	selected.bandwidth.set(opts.TaskRateLimit)
+	resetVerificationLocked(selected, expected)
 	if m.auto {
 		selected.item.State = StateQueued
 	}
@@ -161,6 +176,27 @@ func (m *Manager) AddTask(opts AddOptions) (string, error) {
 	m.notify()
 	m.kick()
 	return id, nil
+}
+
+func writableDirectory(dir string) (string, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("保存目录无效：%w", err)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("无法创建保存目录：%w", err)
+	}
+	probe, err := os.CreateTemp(dir, ".downloader-check-*")
+	if err != nil {
+		return "", fmt.Errorf("保存目录不可写：%w", err)
+	}
+	name := probe.Name()
+	err = probe.Close()
+	_ = os.Remove(name)
+	if err != nil {
+		return "", fmt.Errorf("检查保存目录失败：%w", err)
+	}
+	return dir, nil
 }
 
 func sameOrigin(a, b *url.URL) bool {

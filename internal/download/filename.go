@@ -207,11 +207,11 @@ func pathKey(p string) string {
 	return p
 }
 
-// taskPaths includes the final file and both files used while downloading.
+// taskPaths includes the final file, payloads, metadata and its atomic temporary.
 // They share a reservation so a normal file named *.part cannot be mistaken
 // for another task's partial download.
-func taskPaths(path string) [3]string {
-	return [3]string{path, path + ".part", path + ".part.meta"}
+func taskPaths(path string) [5]string {
+	return [5]string{path, path + ".part", path + ".part.meta", path + ".part.meta.tmp", path + ".part.segments"}
 }
 
 func reservePath(reserved map[string]bool, path string) {

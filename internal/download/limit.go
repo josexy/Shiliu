@@ -46,45 +46,11 @@ func (b *bandwidth) set(rate int64) {
 
 // take reserves bytes before reading. A short read refunds unused tokens.
 func (b *bandwidth) take(ctx context.Context, want int) (int, error) {
-	for {
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-		b.mu.Lock()
-		if b.rate == 0 {
-			b.mu.Unlock()
-			return want, nil
-		}
-		b.refill(time.Now())
-		n := min(want, b.capacity())
-		if b.tokens >= float64(n) {
-			b.tokens -= float64(n)
-			b.mu.Unlock()
-			return n, nil
-		}
-		wait := time.Duration((float64(n) - b.tokens) / float64(b.rate) * float64(time.Second))
-		changed := b.changed
-		b.mu.Unlock()
-		timer := time.NewTimer(max(time.Millisecond, wait))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return 0, ctx.Err()
-		case <-changed:
-			timer.Stop()
-		case <-timer.C:
-		}
-	}
+	return acquireReadBudget(ctx, b, nil, want)
 }
 
 func (b *bandwidth) refund(n int) {
-	if n <= 0 {
-		return
-	}
-	b.mu.Lock()
-	b.refill(time.Now())
-	b.tokens = min(float64(b.capacity()), b.tokens+float64(n))
-	b.mu.Unlock()
+	refundReadBudget(b, nil, n)
 }
 
 // SetRateLimit changes the total bytes per second allowed for all downloads.

@@ -53,7 +53,7 @@ func (e *httpStatusError) userMessage() string {
 
 // fetch makes one request, appends to the partial file, and finishes the
 // download when the body is complete.
-func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error {
+func (m *Manager) fetch(ctx context.Context, t *task) error {
 	cur := m.current(t)
 	if cur.ID == "" {
 		return errRemoved
@@ -69,6 +69,15 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 	m.mu.Unlock()
 	if cur.NeedsHeaders {
 		return fmt.Errorf("此任务需要请求头，请通过「高级新建」重新填写同一链接和请求头")
+	}
+	if cur.SourceRevision > 0 {
+		if err := m.applySourceReset(t); err != nil {
+			return err
+		}
+		cur = m.current(t)
+		m.mu.Lock()
+		etag, lastModified = t.etag, t.lastModified
+		m.mu.Unlock()
 	}
 
 	path := cur.Path
@@ -87,7 +96,9 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 	}
 	hadPart := partSize > 0
 	validator := ifRange(etag, lastModified)
-	resume := hadPart && validator != ""
+	// A missing/corrupt sidecar cannot prove which URL produced these bytes,
+	// especially after recovering an interrupted source change from old records.
+	resume := hadPart && meta.URL == cur.URL && validator != ""
 	if !resume {
 		partSize = 0
 	}
@@ -114,6 +125,15 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 	}
 
 	var stalled atomic.Bool
+	release, err := m.acquireConnection(reqCtx, t)
+	if err != nil {
+		return err
+	}
+	defer release()
+	client, err := m.opts.ClientFactory()
+	if err != nil {
+		return fmt.Errorf("无法建立网络连接：%w", err)
+	}
 	timer := time.AfterFunc(m.stall, func() {
 		stalled.Store(true)
 		cancel()
@@ -142,7 +162,9 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 	case code == http.StatusPartialContent:
 		start, size, ok := parseContentRange(resp.Header.Get("Content-Range"))
 		if !ok || !resume || start != partSize || !sameValidators(resp, etag, lastModified) {
-			removePart(partPath, metaPath)
+			if err := m.discardPart(t, partPath, metaPath); err != nil {
+				return err
+			}
 			return errRestart
 		}
 		total = size
@@ -150,7 +172,9 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 			total = start + resp.ContentLength
 		}
 		if total > 0 && meta.Total > 0 && total != meta.Total {
-			removePart(partPath, metaPath)
+			if err := m.discardPart(t, partPath, metaPath); err != nil {
+				return err
+			}
 			return errRestart
 		}
 	case code == http.StatusOK:
@@ -163,7 +187,9 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 		if size, ok := parseUnsatisfiedRange(resp.Header.Get("Content-Range")); ok && resume && size == partSize && sameValidators(resp, etag, lastModified) {
 			return m.finalize(t, partPath, metaPath, partSize, partSize)
 		}
-		removePart(partPath, metaPath)
+		if err := m.discardPart(t, partPath, metaPath); err != nil {
+			return err
+		}
 		return errRestart
 	case code >= 200 && code < 300:
 		if resume {
@@ -205,7 +231,7 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("无法创建下载文件夹：%w", err)
 	}
-	if err := writePartMeta(metaPath, partMeta{
+	if err := m.writeTaskMeta(t, metaPath, partMeta{
 		URL:          cur.URL,
 		ETag:         etag,
 		LastModified: lastModified,
@@ -232,7 +258,7 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 
 	buf := make([]byte, 16*1024)
 	for {
-		allowed, limitErr := m.bandwidth.take(ctx, len(buf))
+		allowed, limitErr := acquireReadBudget(ctx, &m.bandwidth, &t.bandwidth, len(buf))
 		if limitErr != nil {
 			file.Close()
 			return limitErr
@@ -242,7 +268,7 @@ func (m *Manager) fetch(ctx context.Context, t *task, client *http.Client) error
 		timer.Reset(m.stall)
 		n, readErr := resp.Body.Read(buf[:allowed])
 		timer.Stop()
-		m.bandwidth.refund(allowed - n)
+		refundReadBudget(&m.bandwidth, &t.bandwidth, allowed-n)
 		if n > 0 {
 			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
 				file.Close()
@@ -327,26 +353,33 @@ func (m *Manager) beginTransfer(t *task, total, done int64, etag, lastModified s
 	t.item.ETA = 0
 	t.etag, t.lastModified = etag, lastModified
 	t.lastSample = timeNow()
-	t.lastDone = done
+	t.lastDone = t.item.NetworkBytes
 	m.mu.Unlock()
 	m.notify()
 }
 
 func (m *Manager) advance(t *task, n, total int64) {
-	now := timeNow()
 	m.mu.Lock()
 	t.item.Done += n
+	t.item.NetworkBytes += n
 	if total >= 0 {
 		t.item.Total = total
 	}
+	m.sampleSpeedLocked(t)
+	m.mu.Unlock()
+	m.notifyThrottled()
+}
+
+func (m *Manager) sampleSpeedLocked(t *task) {
+	now := timeNow()
 	if elapsed := now.Sub(t.lastSample).Seconds(); elapsed >= 0.25 {
-		instant := float64(t.item.Done-t.lastDone) / elapsed
+		instant := float64(t.item.NetworkBytes-t.lastDone) / elapsed
 		if t.item.Speed <= 0 {
 			t.item.Speed = instant
 		} else {
 			t.item.Speed = 0.7*t.item.Speed + 0.3*instant
 		}
-		t.lastSample, t.lastDone = now, t.item.Done
+		t.lastSample, t.lastDone = now, t.item.NetworkBytes
 		if t.item.Total > 0 && t.item.Speed > 1 {
 			remaining := float64(t.item.Total - t.item.Done)
 			if remaining < 0 {
@@ -357,8 +390,6 @@ func (m *Manager) advance(t *task, n, total int64) {
 			t.item.ETA = 0
 		}
 	}
-	m.mu.Unlock()
-	m.notifyThrottled()
 }
 
 // finalize moves the partial file to its name and marks the download done.
@@ -373,6 +404,10 @@ func (m *Manager) finalize(t *task, partPath, metaPath string, done, total int64
 
 	if fileExists(finalPath) {
 		m.mu.Lock()
+		if t.item.SourceRevision > 0 || t.item.TransferMode == "segments" {
+			m.mu.Unlock()
+			return fmt.Errorf("原目标路径已存在文件，请先处理文件冲突后重试")
+		}
 		unreservePath(m.reserved, finalPath)
 		finalPath = uniquePath(filepath.Dir(finalPath), filepath.Base(finalPath), m.reserved)
 		reservePath(m.reserved, finalPath)
@@ -380,10 +415,16 @@ func (m *Manager) finalize(t *task, partPath, metaPath string, done, total int64
 		t.item.FileName = filepath.Base(finalPath)
 		m.mu.Unlock()
 	}
+	keepMeta, err := m.prepareSourceCompletion(t, metaPath, done)
+	if err != nil {
+		return fmt.Errorf("无法保存完成检查点：%w", err)
+	}
 	if err := os.Rename(partPath, finalPath); err != nil {
 		return fmt.Errorf("无法保存文件：%w", err)
 	}
-	_ = os.Remove(metaPath)
+	if !keepMeta {
+		_ = os.Remove(metaPath)
+	}
 
 	m.mu.Lock()
 	t.item.State = StateCompleted
@@ -399,6 +440,10 @@ func (m *Manager) finalize(t *task, partPath, metaPath string, done, total int64
 	t.item.Attempt = 0
 	t.item.Missing = false
 	t.item.FinishedAt = timeNow()
+	if t.item.ExpectedSHA256 != "" && !m.closed {
+		resetVerificationLocked(t, t.item.ExpectedSHA256)
+		t.verifyQueued = true
+	}
 	item := t.item
 	m.mu.Unlock()
 	m.notify()
