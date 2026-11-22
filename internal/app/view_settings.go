@@ -333,9 +333,14 @@ func (a *app) settingsAbout(c *ui.Context) {
 	p := a.palette
 	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 		appLogo(c, 52)
-		ui.Column(c).Gap(2).Children(func() {
+		ui.Column(c).Gap(2).Grow(1).Children(func() {
 			ui.Text(c, appinfo.Name+" · "+appinfo.Product).FontSize(17).Bold()
 			ui.Text(c, "版本 "+a.deps.version).FontSize(13).TextColor(p.Muted)
+		})
+		ui.Button(c, "检查更新").Disabled(a.deps.checkForUpdates == nil).OnClick(func() {
+			if a.deps.checkForUpdates != nil {
+				a.deps.checkForUpdates()
+			}
 		})
 	})
 

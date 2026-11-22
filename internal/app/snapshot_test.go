@@ -45,6 +45,7 @@ func TestSnapshots(t *testing.T) {
 	engine := &fakeEngine{}
 	engine.items = sampleItems()
 	a := newTestApp(t, engine)
+	a.deps.checkForUpdates = func() {}
 	a.s.DownloadDir = filepath.FromSlash("C:/Users/Ada/Downloads")
 	a.deps.dataDir = filepath.FromSlash("C:/Users/Ada/AppData/Roaming/拾流")
 	a.system = &proxy.System{

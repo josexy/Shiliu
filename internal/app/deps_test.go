@@ -68,3 +68,22 @@ func TestBuildVersionReachesAboutAndRequests(t *testing.T) {
 		})
 	}
 }
+
+func TestAboutChecksForUpdatesOnlyOnClick(t *testing.T) {
+	a := newTestApp(t, &fakeEngine{})
+	checks := 0
+	a.deps.checkForUpdates = func() { checks++ }
+	a.openSettings(3)
+	tt := testerFor(a)
+	tt.Frame()
+	if checks != 0 {
+		t.Fatal("rendering the About page started an update check")
+	}
+	if err := tt.Click("检查更新"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if checks != 1 {
+		t.Fatalf("update checks = %d, want one per click", checks)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"github.com/egoist/mygo"
 	// MyGo's own controls, menus and dialogs in Simplified Chinese.
 	_ "github.com/egoist/mygo/locales/zh-Hans"
+	updaterNative "github.com/egoist/mygo/plugins/updater/native"
 
 	"go-downloader/internal/appinfo"
 )
@@ -28,6 +29,8 @@ func run(makeDeps func() deps) error {
 	// The app's texts are Chinese, so MyGo's own controls follow.
 	mygo.App.SetLanguages("zh-Hans", "en")
 	mygo.App.SetLocale("zh-Hans")
+	// The native updater keeps updates independent of a webview runtime.
+	mygo.Use(updaterNative.Plugin)
 	a := newApp(makeDeps())
 	a.load()
 	defer a.shutdown()

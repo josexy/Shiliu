@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 	"github.com/egoist/mygo/transfer"
 
 	"go-downloader/internal/appinfo"
@@ -36,6 +37,7 @@ type deps struct {
 	trayUnavailable  string
 	backgroundWindow func(*mygo.Window) backgroundWindow
 	quit             func()
+	checkForUpdates  func()
 
 	pickFolder      func(parent *mygo.Window, title string) (string, error)
 	pickTaskList    func(parent *mygo.Window) (string, error)
@@ -67,6 +69,7 @@ func realDeps() deps {
 		},
 		backgroundWindow: func(w *mygo.Window) backgroundWindow { return w },
 		quit:             mygo.App.Quit,
+		checkForUpdates:  updater.CheckForUpdates,
 		secrets:          appSecrets(),
 		now:              time.Now,
 		async:            func(fn func()) { go fn() },

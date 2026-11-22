@@ -8,6 +8,10 @@
   "icon": "resources/icon.png",
   "out": "build",
   "resourcesExclude": ["design"],
+  "updates": {
+    "publicKey": "wTk+MGwjMMxZ+liqh7lYsNIJtcdem4WV5+qj2MLdbVA=",
+    "github": "josexy/Shiliu"
+  },
   "windows": {
     "installDirName": "Shiliu"
   },

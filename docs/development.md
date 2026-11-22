@@ -43,7 +43,7 @@ go tool mygo build
 跨平台打包：
 
 ```sh
-go tool mygo build -platform windows/amd64,darwin/universal,linux/amd64
+go tool mygo build -platform windows/amd64,windows/arm64,darwin/universal,linux/amd64,linux/arm64
 ```
 
 macOS 签名与 `.dmg` 制作需要 macOS。Windows 安装包需要 NSIS，MyGo 可在 Windows 上自动下载。
@@ -61,6 +61,49 @@ macOS 签名与 `.dmg` 制作需要 macOS。Windows 安装包需要 NSIS，MyGo 
 `resources/` 存放资源，`scripts/` 存放生成与测量脚本，`docs/` 存放使用、验收和测量文档。协作规范见 [AGENTS.md](../AGENTS.md)；UI 开发另见 [MyGo 维护技能](../.agents/skills/mygo-maintenance/SKILL.md)。
 
 图标原稿为 `resources/design/icon-source.png`，由内置 ImageGen 生成，提示词见同目录的 `icon-prompt.txt`。运行 `python scripts/make-icon.py`（需要 Pillow）可重建 1024×1024 RGBA 的 `resources/icon.png`，保留透明边缘。UI、托盘和 MyGo 打包共享此文件；更新后重新构建应用。设计目录不随应用分发。
+
+## 持续集成与发布
+
+两个工作流分别负责测试和发布，GitHub 官方 Actions 统一使用 `@v7`，Go 版本读取 `go.mod`：
+
+- [ci.yml](../.github/workflows/ci.yml)：在 `main` 推送、PR、合并队列或手动触发时，在 Linux 上运行 `CGO_ENABLED=0` 的 `go test ./...` 和 `go tool mygo vet .`。分支保护可选择 `Test` 检查。
+- [release.yml](../.github/workflows/release.yml)：推送 `v*` 标签后复用上述测试，校验版本与仓库并创建 Release 草稿，再分别在 Windows、Linux、macOS runner 执行 `go tool mygo build -upload`。Windows、Linux 各构建 amd64 和 arm64，macOS 构建包含两种架构的 universal 包。MyGo 负责更新包签名、清单、增量包、安装脚本和校验和的上传；所有平台完成后再发布草稿。构建上传串行执行，避免各平台同时覆盖共享的 `SHA256SUMS`。
+
+流程遵循 [MyGo 的原生应用 CI 指南](https://mygo.egoist.dev/docs/github-actions)，无需 Bun 或前端构建步骤。`mygo.json` 的 `updates.github` 指向公开仓库 `josexy/Shiliu`，`updates.publicKey` 固定更新验签公钥。私钥由仓库 Secret `MYGO_UPDATER_PRIVATE_KEY` 注入构建步骤；上传使用工作流内置的 `GITHUB_TOKEN`，创建草稿和构建上传任务拥有 `contents: write` 权限。
+
+发布时先修改 `mygo.json` 的 `version` 并提交，再推送相同版本的标签，例如：
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+标签必须与 `mygo.json` 中的版本一致，否则停止打包。失败后可重新运行失败的任务，MyGo 会向同一草稿补传并替换同名文件。正式发布后，安装版从 GitHub 最新正式 Release 检查更新；草稿和预发布版本不会推送给普通用户。
+
+### 更新签名与本地构建
+
+更新使用 Ed25519 密钥，已配置在 GitHub 仓库 Secret 中；本机副本位于 `%AppData%\mygo\update-keys\shiliu\`（`mygo-update.key` 与 `mygo-update.pub`）。私钥应备份到密码管理器，不放入仓库；`.gitignore` 也排除了 `mygo-update.key`。发布时持续使用同一密钥，已安装版本只信任内置公钥，不能随意重新生成或替换。
+
+本地签名构建（仅将私钥载入当前进程环境，不输出其内容）：
+
+```powershell
+$keyPath = Join-Path $env:APPDATA 'mygo/update-keys/shiliu/mygo-update.key'
+$previousKey = $env:MYGO_UPDATER_PRIVATE_KEY
+try {
+    $env:MYGO_UPDATER_PRIVATE_KEY = (Get-Content -LiteralPath $keyPath -Raw).Trim()
+    go tool mygo build
+} finally {
+    $env:MYGO_UPDATER_PRIVATE_KEY = $previousKey
+}
+```
+
+```bash
+MYGO_UPDATER_PRIVATE_KEY="$(cat /path/to/mygo-update.key)" go tool mygo build
+```
+
+应用使用 MyGo 的 `plugins/updater/native`，无需 WebView。默认启动约 10 秒后检查一次，持续运行时每天检查；用户可在「设置 → 关于」手动检查，在更新窗口选择安装、稍后提醒或跳过。重启沿用应用正常退出保存流程。开发运行及无写入权限的安装目录不启用自动更新，详情由更新窗口说明。
+
+Ed25519 更新签名用于验证更新包，与操作系统的代码签名不同；Windows 发布证书和 macOS Developer ID 签名/公证尚未配置。竞态检测、视觉快照和原生交互继续按下文按需验证。
 
 ## 验证与视觉快照
 

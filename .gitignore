@@ -3,5 +3,8 @@
 /.mygo/
 mygo_windows_*.syso
 
+# Update signing private keys must stay outside the repository
+mygo-update.key
+
 # Generated visual snapshots
 /internal/app/testdata/snapshots/

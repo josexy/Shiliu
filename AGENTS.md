@@ -16,6 +16,7 @@
 | `internal/diagnostics` | 有限容量的脱敏诊断记录 |
 | `internal/rules`、`internal/tasklist` | 分类目录规则、任务清单解析与导入导出 |
 | `resources`、`scripts`、`docs` | 打包资源、资源生成脚本与项目文档截图 |
+| `.github/workflows` | 核心自动测试、Release 打包与上传 |
 
 - 新增界面、窗口状态和操作回调放在 `internal/app`，按现有 `view_*.go`、`app_*.go` 的职责组织文件；根目录的 Go 源码只保留启动入口。
 - 下载、代理、设置、存储及其他非 UI 包不依赖 `internal/app` 或 `mygo/ui`。`internal/appinfo` 不依赖 UI 框架。具有独立职责的功能放进对应的 `internal` 包，避免循环依赖。
@@ -36,6 +37,7 @@
 - 原生应用保留 `mygo.json`。修改配置前核对当前 MyGo 依赖源码中的 `docs/configuration.md` 和 `cmd/mygo/config.go`；保持 `linux.webview: false`，无需引入前端配置或 JavaScript 运行时。
 - `slug` 和 `identifier` 是安装与系统集成标识，发布后保持稳定，不能仅因展示名称调整而随意替换。打包命名与平台配置见 [开发指南](docs/development.md#构建与打包)。
 - 保留 `internal/app/app_identity.go` 的旧数据目录与凭据服务兼容逻辑：新目录优先，旧目录复用时不搬移或覆盖数据；安装版、`mygo dev` 与直接运行保持隔离。数据目录选择必须在单实例锁及创建新数据目录之前完成。
+- 自动更新使用 MyGo 的 `plugins/updater/native`，保持纯原生 UI。更新公钥在 `mygo.json`，私钥仅存仓库外及 GitHub Secret `MYGO_UPDATER_PRIVATE_KEY`，不得提交或打印；已发布后保持密钥稳定。更新重启须走正常退出保存流程。
 
 ## MyGo UI 开发
 
@@ -74,6 +76,7 @@ go list -m -f '{{.Dir}}' github.com/egoist/mygo
 - 并发或共享状态变更：在支持的环境中对受影响包运行 `go test -race`；构建或依赖变更检查 `CGO_ENABLED=0` 构建/测试与受影响平台。
 - 网络测试使用本地 `httptest`、本地代理或测试替身，不依赖外部下载站点；平台服务优先通过 `deps` 替换。
 - 纯文档变更：核对命令、路径、相对链接及 `git diff --check`，不要求重复构建和生成截图。
+- CI/CD 工作流变更：运行 actionlint，并复现改动涉及的本地检查；Go 版本从 `go.mod` 读取，GitHub 官方 Actions 使用 `@v7`。测试与 Release 打包上传分开维护，常规 CI 保持精简。流程见 [持续集成与发布](docs/development.md#持续集成与发布)。
 
 快照命令的 Bash 与 PowerShell 写法见 [开发指南的验证说明](docs/development.md#验证与视觉快照)。生成目录为 `internal/app/testdata/snapshots/`，已被 Git 忽略；UI 有可见变化时按需更新 `docs/screenshot-light.png` 和 `docs/screenshot-dark.png`。
 

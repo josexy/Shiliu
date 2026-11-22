@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  draft:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check release version and repository
+        run: |
+          test "$GITHUB_REF_NAME" = "v$(jq -r .version mygo.json)"
+          test "$GITHUB_REPOSITORY" = "$(jq -r .updates.github mygo.json)"
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            flags=(--draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+          fi
+
+  build:
+    needs: draft
+    name: Build and upload (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      # MyGo merges the shared SHA256SUMS on upload; avoid concurrent writes.
+      max-parallel: 1
+      matrix:
+        include:
+          - { name: windows, os: windows-latest, platform: 'windows/amd64,windows/arm64' }
+          - { name: linux, os: ubuntu-latest, platform: 'linux/amd64,linux/arm64' }
+          - { name: macos, os: macos-latest, platform: darwin/universal }
+    env:
+      CGO_ENABLED: '0'
+      PLATFORM: ${{ matrix.platform }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build signed updates and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: go tool mygo build -platform "$PLATFORM" -upload
