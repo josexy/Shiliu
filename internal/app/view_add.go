@@ -15,6 +15,8 @@ func (a *app) addCard(c *ui.Context) {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Icon(c, icoLink).FontSize(16).TextColor(p.Accent)
 			ui.Text(c, "新建下载").FontSize(14).Bold().Grow(1)
+			smallButton(c, "导入 TXT").OnClick(a.openImport)
+			smallButton(c, "导出清单").OnClick(a.openExport)
 			ui.Text(c, "支持 HTTP / HTTPS").FontSize(12).TextColor(p.Muted)
 		})
 		ui.TextArea(c, &a.input).MinHeight(60).Height(60).FontSize(13).Background(p.Canvas).Label("下载链接输入").

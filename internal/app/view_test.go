@@ -105,6 +105,17 @@ func (f *fakeEngine) setState(id string, state download.State) {
 	}
 }
 
+func (f *fakeEngine) AddContext(ctx context.Context, raw string) (int, int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
+	added, skipped, invalid := f.Add(raw)
+	if len(invalid) > 0 {
+		return added, skipped, fmt.Errorf("链接无效")
+	}
+	return added, skipped, nil
+}
+
 func (f *fakeEngine) AddTask(opts download.AddOptions) (string, error) {
 	added, _, invalid := f.Add(opts.URL)
 	if added == 0 || len(invalid) > 0 {
@@ -122,6 +133,12 @@ func (f *fakeEngine) AddTask(opts download.AddOptions) (string, error) {
 		it.FileName = opts.FileName
 	}
 	it.Path = filepath.Join(dir, it.FileName)
+	it.TaskRateLimit = opts.TaskRateLimit
+	it.ConnectionLimit = opts.ConnectionLimit
+	it.ExpectedSHA256, _ = download.NormalizeSHA256(opts.ExpectedSHA256)
+	if it.ExpectedSHA256 != "" {
+		it.VerificationState = download.VerificationPending
+	}
 	return it.ID, nil
 }
 
@@ -129,6 +146,90 @@ func (f *fakeEngine) SetRateLimit(rate int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record(fmt.Sprintf("SetRateLimit:%d", rate))
+}
+
+func (f *fakeEngine) SetMaxConnections(n int) error {
+	f.record(fmt.Sprintf("SetMaxConnections:%d", n))
+	return nil
+}
+func (f *fakeEngine) SetDefaultConnections(n int) error {
+	f.record(fmt.Sprintf("SetDefaultConnections:%d", n))
+	return nil
+}
+func (f *fakeEngine) SetTaskConnections(id string, n int) error {
+	for i := range f.items {
+		if f.items[i].ID == id {
+			f.items[i].ConnectionLimit = n
+			return nil
+		}
+	}
+	return fmt.Errorf("任务已移除")
+}
+
+func (f *fakeEngine) BeginSourceUpdate(string, download.SourceOptions) (*download.SourceDraft, error) {
+	return nil, fmt.Errorf("测试引擎不支持源更新")
+}
+func (f *fakeEngine) ProbeSource(context.Context, *download.SourceDraft) (download.SourcePreview, error) {
+	return download.SourcePreview{}, fmt.Errorf("测试引擎不支持源更新")
+}
+func (f *fakeEngine) CommitSource(*download.SourceDraft) error {
+	return fmt.Errorf("测试引擎不支持源更新")
+}
+
+func (f *fakeEngine) SetTaskRateLimit(id string, rate int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.items {
+		if f.items[i].ID == id {
+			f.items[i].TaskRateLimit = rate
+			f.record(fmt.Sprintf("SetTaskRateLimit:%s:%d", id, rate))
+			return nil
+		}
+	}
+	return fmt.Errorf("任务已移除")
+}
+
+func (f *fakeEngine) SetExpectedSHA256(id, raw string) error {
+	expected, err := download.NormalizeSHA256(raw)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.items {
+		if f.items[i].ID == id {
+			f.items[i].ExpectedSHA256 = expected
+			f.items[i].VerificationState = download.VerificationUnconfigured
+			if expected != "" {
+				f.items[i].VerificationState = download.VerificationPending
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("任务已移除")
+}
+func (f *fakeEngine) Verify(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.items {
+		if f.items[i].ID == id {
+			f.record("Verify:" + id)
+			f.items[i].VerificationState = download.VerificationChecking
+			return nil
+		}
+	}
+	return fmt.Errorf("任务已移除")
+}
+func (f *fakeEngine) CancelVerification(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.items {
+		if f.items[i].ID == id {
+			f.record("CancelVerification:" + id)
+			f.items[i].VerificationState = download.VerificationCanceled
+			f.items[i].VerificationQueued = false
+		}
+	}
 }
 
 func (f *fakeEngine) Pause(id string) {
@@ -270,10 +371,14 @@ func (f *fakeEngine) Records() []download.Record {
 		out = append(out, download.Record{
 			ID: it.ID, URL: it.URL, FileName: it.FileName, Path: it.Path,
 			State: it.State, Total: it.Total, Done: it.Done, CreatedAt: it.CreatedAt,
+			TaskRateLimit:  it.TaskRateLimit,
+			ExpectedSHA256: it.ExpectedSHA256, LastVerification: it.LastVerification,
 		})
 	}
 	return out
 }
+
+func (f *fakeEngine) AcknowledgeSources([]download.Record) error { return nil }
 
 func (f *fakeEngine) Restore(records []download.Record) {
 	f.mu.Lock()

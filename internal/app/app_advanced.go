@@ -7,21 +7,25 @@ import (
 )
 
 type advancedState struct {
-	open       bool
-	busy       bool
-	generation uint64
-	url        string
-	dir        string
-	fileName   string
-	referer    string
-	cookie     string
-	headers    string
-	err        string
+	open        bool
+	busy        bool
+	generation  uint64
+	url         string
+	dir         string
+	fileName    string
+	referer     string
+	cookie      string
+	headers     string
+	rateKiB     string
+	connections string
+	expectedSHA string
+	err         string
 }
 
 func (a *app) openAdvanced() {
 	generation := a.advanced.generation + 1
-	a.advanced = advancedState{open: true, generation: generation, dir: a.s.DownloadDir}
+	a.advanced = advancedState{open: true, generation: generation, dir: a.s.DownloadDir, rateKiB: "0"}
+	a.advanced.connections = numberLabel(a.s.TaskConnections)
 	if valid, invalid := download.NormalizeURLs(a.input); len(valid) == 1 && len(invalid) == 0 {
 		// Keep in-memory URL credentials when pre-filling the advanced form.
 		a.advanced.url = strings.TrimSpace(a.input)
@@ -57,6 +61,21 @@ func (a *app) submitAdvanced() {
 	if a.advanced.busy {
 		return
 	}
+	connections, err := download.ParseConnectionCount(a.advanced.connections, 8)
+	if err != nil {
+		a.advanced.err = err.Error()
+		return
+	}
+	rate, err := download.ParseTaskRateKiB(a.advanced.rateKiB)
+	if err != nil {
+		a.advanced.err = err.Error()
+		return
+	}
+	expected, err := download.NormalizeSHA256(a.advanced.expectedSHA)
+	if err != nil {
+		a.advanced.err = err.Error()
+		return
+	}
 	headers, err := download.ParseHeaders(a.advanced.headers)
 	if err != nil {
 		a.advanced.err = err.Error()
@@ -69,7 +88,7 @@ func (a *app) submitAdvanced() {
 		headers.Set("Cookie", a.advanced.cookie)
 	}
 	opts := download.AddOptions{URL: a.advanced.url, Dir: a.advanced.dir,
-		FileName: a.advanced.fileName, Headers: headers}
+		FileName: a.advanced.fileName, Headers: headers, TaskRateLimit: rate, ExpectedSHA256: expected, ConnectionLimit: connections}
 	a.advanced.busy, a.advanced.err = true, ""
 	generation, engine := a.advanced.generation, a.engine
 	a.deps.async(func() {

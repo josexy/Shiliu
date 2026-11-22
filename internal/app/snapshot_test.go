@@ -1,9 +1,12 @@
 package app
 
 import (
+	"context"
+	"fmt"
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 	"go-downloader/internal/download"
 	"go-downloader/internal/proxy"
 	"go-downloader/internal/settings"
+	"go-downloader/internal/tasklist"
 )
 
 // TestSnapshots renders the interface to PNG files for visual review:
@@ -240,6 +244,7 @@ func TestSnapshots(t *testing.T) {
 		features.openAdvanced()
 		features.advanced.url = "https://example.com/download/archive.zip"
 		features.advanced.fileName = "项目资料.zip"
+		features.advanced.rateKiB = "128"
 		featureTester.Frame()
 		save(name+"-compact-125-advanced.png", featureTester)
 		featureTester.Wheel(600, 370, 0, 420)
@@ -249,15 +254,104 @@ func TestSnapshots(t *testing.T) {
 		features.openDetails("d1")
 		featureTester.Frame()
 		save(name+"-compact-125-details.png", featureTester)
+		features.detailsRate = "-1"
+		features.applyTaskRateLimit()
+		featureTester.Frame()
+		save(name+"-compact-125-details-rate-error.png", featureTester)
 		features.openDetails("d3")
 		featureTester.Frame()
 		featureTester.Wheel(600, 370, 0, 500)
 		featureTester.Advance(500 * time.Millisecond)
 		save(name+"-compact-125-details-error.png", featureTester)
 		features.detailsOpen = false
+		for _, state := range []download.VerificationState{download.VerificationChecking, download.VerificationMatched, download.VerificationMismatched, download.VerificationPending} {
+			for i := range features.engine.(*fakeEngine).items {
+				it := &features.engine.(*fakeEngine).items[i]
+				if it.ID != "d4" {
+					continue
+				}
+				it.ExpectedSHA256 = strings.Repeat("ab", 32)
+				it.VerificationState = state
+				it.VerificationDone = 4 * 1024 * 1024
+				it.VerificationTotal = 12 * 1024 * 1024
+				it.LastVerification = download.VerificationResult{State: download.VerificationMatched, ExpectedSHA256: it.ExpectedSHA256, ActualSHA256: it.ExpectedSHA256, CheckedAt: testNow, Size: it.Total}
+				if state == download.VerificationMismatched {
+					it.LastVerification.State = state
+					it.LastVerification.ActualSHA256 = strings.Repeat("cd", 32)
+				}
+			}
+			features.openDetails("d4")
+			featureTester.Frame()
+			save(name+"-compact-125-verification-"+string(state)+".png", featureTester)
+		}
+		features.detailsOpen = false
 		features.openSettings(0)
 		featureTester.Frame()
 		save(name+"-compact-125-rate-limit.png", featureTester)
+		featureTester.Wheel(600, 400, 0, 600)
+		featureTester.Advance(500 * time.Millisecond)
+		features.tray.reason = trayPlatformReason("windows")
+		featureTester.Frame()
+		save(name+"-compact-125-tray-unavailable.png", featureTester)
+		features.tray.reason = ""
+		features.tray.handle = &fakeTray{}
+		features.s.CloseToTray = true
+		featureTester.Frame()
+		featureTester.Advance(300 * time.Millisecond)
+		save(name+"-compact-125-tray-enabled.png", featureTester)
+		features.tray.handle = nil
+		features.s.CloseToTray = false
+		features.settingsOpen = false
+		features.openImport()
+		var links strings.Builder
+		for i := range 80 {
+			fmt.Fprintf(&links, "https://example.com/releases/file-%02d.zip\n", i)
+		}
+		links.WriteString("https://example.com/releases/file-00.zip\n无效文本\n")
+		features.taskList.preview, _ = tasklist.Parse(context.Background(), []byte(links.String()), nil)
+		featureTester.Frame()
+		save(name+"-compact-125-import.png", featureTester)
+		features.closeTaskList()
+		features.openExport()
+		featureTester.Frame()
+		save(name+"-compact-125-export.png", featureTester)
+		features.closeTaskList()
+		features.openSource("d3")
+		features.source.url = "https://example.com/driver-setup.exe?signature=renewed"
+		features.source.preview = download.SourcePreview{URL: "https://example.com/driver-setup.exe", Reason: "无法证明为同一资源，将从头下载"}
+		featureTester.Frame()
+		save(name+"-compact-125-source-reset.png", featureTester)
+		features.source.preview.Reuse = true
+		features.source.preview.Reason = "已有前缀已逐字节验证，可保留进度继续下载"
+		featureTester.Frame()
+		save(name+"-compact-125-source-reuse.png", featureTester)
+		features.source.saved = true
+		features.source.url = ""
+		featureTester.Frame()
+		save(name+"-compact-125-source-saved.png", featureTester)
+		features.closeSource()
+		features.engine.(*fakeEngine).items[0].ConnectionLimit = 4
+		features.engine.(*fakeEngine).items[0].TransferMode = "segments"
+		features.engine.(*fakeEngine).items[0].ActiveConnections = 2
+		features.engine.(*fakeEngine).items[0].WaitingConnections = 2
+		features.engine.(*fakeEngine).items[0].FallbackReason = ""
+		features.openDetails("d1")
+		featureTester.Frame()
+		save(name+"-compact-125-connections.png", featureTester)
+		featureTester.Wheel(600, 370, 0, 230)
+		featureTester.Advance(500 * time.Millisecond)
+		features.detailsConnections = "9"
+		features.applyTaskConnections()
+		features.engine.(*fakeEngine).items[0].TransferMode = "single"
+		features.engine.(*fakeEngine).items[0].ActiveConnections = 1
+		features.engine.(*fakeEngine).items[0].WaitingConnections = 0
+		features.engine.(*fakeEngine).items[0].FallbackReason = "服务器未提供可靠的 206、强 ETag 和未压缩表示"
+		featureTester.Frame()
+		save(name+"-compact-125-connections-error.png", featureTester)
+		features.detailsOpen = false
+		features.openSettings(0)
+		featureTester.Frame()
+		save(name+"-compact-125-connection-settings.png", featureTester)
 		features.settingsOpen = false
 	}
 }

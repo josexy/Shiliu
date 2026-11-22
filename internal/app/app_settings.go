@@ -51,6 +51,8 @@ func (a *app) syncFields() {
 	}
 	a.sortLabel = sortLabelFor(a.s.Sort)
 	a.maxLabel = numberLabel(a.s.MaxConcurrent)
+	a.globalConnections = numberLabel(a.s.MaxConnections)
+	a.defaultConnections = numberLabel(a.s.TaskConnections)
 	a.rateKiB = float64(a.s.RateLimit) / 1024
 	a.proxyModeIdx = proxyModeIndex(a.s.Proxy.Mode)
 	a.proxyKindLabel = proxyKindLabel(a.s.Proxy.Kind)
@@ -359,7 +361,7 @@ func (a *app) setDownloadDir(dir string) error {
 
 // runProxyTest checks the proxy the settings page edits.
 func (a *app) runProxyTest() {
-	if a.proxyTest.running || a.deps.testProxy == nil {
+	if a.stopping || a.proxyTest.running || a.deps.testProxy == nil {
 		return
 	}
 	cfg := a.proxyDraft
@@ -371,11 +373,20 @@ func (a *app) runProxyTest() {
 	}
 	sys := a.system
 	a.proxyTest = proxyTest{running: true}
+	lifetime := a.lifetime
+	a.backgroundJobs.Add(1)
 	a.deps.async(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer a.backgroundJobs.Done()
+		ctx, cancel := context.WithTimeout(lifetime, 20*time.Second)
 		defer cancel()
 		elapsed, err := a.deps.testProxy(ctx, cfg, sys, proxyTestURL)
+		if lifetime.Err() != nil {
+			return
+		}
 		a.dispatch(func() {
+			if a.stopping {
+				return
+			}
 			if err != nil {
 				a.proxyTest = proxyTest{result: "连接失败：" + err.Error()}
 				return

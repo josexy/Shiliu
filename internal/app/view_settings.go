@@ -140,6 +140,7 @@ func (a *app) settingsGeneral(c *ui.Context) {
 			a.setMaxConcurrent(mustAtoi(a.maxLabel, a.s.MaxConcurrent))
 		}
 	})
+	a.connectionSettings(c)
 	a.settingsRow(c, icoBell, "下载完成后通知", "应用在后台时用系统通知提醒。", func() {
 		if ui.Switch(c, &a.s.NotifyOnComplete).Label("下载完成后通知").Changed() {
 			a.saveSettings()
@@ -160,6 +161,18 @@ func (a *app) settingsGeneral(c *ui.Context) {
 				a.saveSettings()
 			}
 		})
+	reason := a.tray.reason
+	if reason == "" && a.tray.handle == nil {
+		reason = "托盘服务不可用，关闭窗口将正常退出"
+	}
+	tip := reason
+	if tip == "" {
+		tip = "隐藏到托盘后继续下载；请从托盘菜单退出应用。"
+	}
+	a.settingsRow(c, icoMonitor, "关闭窗口后继续下载", tip, func() {
+		c.Key("close-to-tray")
+		ui.Switch(c, &a.s.CloseToTray).Label("关闭到托盘开关").Disabled(reason != "").OnChange(a.saveSettings)
+	})
 
 	if a.proxyErr != "" {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {

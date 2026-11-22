@@ -44,9 +44,12 @@ type Settings struct {
 	Sort             SortKey      `json:"sort"`
 	Proxy            proxy.Config `json:"proxy"`
 	MaxConcurrent    int          `json:"maxConcurrent"`
+	MaxConnections   int          `json:"maxConnections,omitempty"`
+	TaskConnections  int          `json:"taskConnections,omitempty"`
 	RateLimit        int64        `json:"rateLimit,omitempty"`
 	NotifyOnComplete bool         `json:"notifyOnComplete"`
 	AutoStart        bool         `json:"autoStart"`
+	CloseToTray      bool         `json:"closeToTray,omitempty"`
 }
 
 // Default returns the settings of a first run.
@@ -91,6 +94,11 @@ func (s *Settings) Normalize(defaultDir string) {
 		s.MaxConcurrent = 8
 	}
 	s.RateLimit = max(0, min(s.RateLimit, 1024*1024*1024))
+	if s.MaxConnections <= 0 {
+		s.MaxConnections = 16
+	}
+	s.MaxConnections = min(s.MaxConnections, 64)
+	s.TaskConnections = max(1, min(s.TaskConnections, 8))
 	s.Proxy.Normalize()
 	s.DownloadDir = strings.TrimSpace(s.DownloadDir)
 	if s.DownloadDir == "" {

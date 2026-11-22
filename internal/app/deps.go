@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -10,6 +11,7 @@ import (
 	"go-downloader/internal/proxy"
 	"go-downloader/internal/settings"
 	"go-downloader/internal/store"
+	"go-downloader/resources"
 )
 
 // deps are the world outside the app, so tests can replace it.
@@ -19,15 +21,21 @@ type deps struct {
 	version    string
 	secrets    store.SecretStore
 
-	now       func() time.Time
-	async     func(func())
-	notify    func(title, body string)
-	canNotify func() bool
-	appActive func() bool
+	now              func() time.Time
+	async            func(func())
+	notify           func(title, body string)
+	canNotify        func() bool
+	appActive        func() bool
+	newTray          func() (trayHandle, error)
+	trayUnavailable  string
+	backgroundWindow func(*mygo.Window) backgroundWindow
+	quit             func()
 
-	pickFolder func(parent *mygo.Window, title string) (string, error)
-	openPath   func(path string) error
-	reveal     func(path string)
+	pickFolder   func(parent *mygo.Window, title string) (string, error)
+	pickTaskList func(parent *mygo.Window) (string, error)
+	saveTaskList func(parent *mygo.Window) (string, error)
+	openPath     func(path string) error
+	reveal       func(path string)
 
 	detectSystem func(ctx context.Context) (*proxy.System, error)
 	testProxy    func(ctx context.Context, cfg proxy.Config, sys *proxy.System, target string) (time.Duration, error)
@@ -38,10 +46,16 @@ type deps struct {
 func realDeps() deps {
 	version := appinfo.NormalizeVersion(mygo.App.Version())
 	return deps{
-		version: version,
-		secrets: mygoSecrets{},
-		now:     time.Now,
-		async:   func(fn func()) { go fn() },
+		version:         version,
+		trayUnavailable: trayPlatformReason(runtime.GOOS),
+		newTray: func() (trayHandle, error) {
+			return mygo.NewTray(mygo.TrayOptions{ID: "downloads", Icon: resources.IconPNG, ToolTip: "下载器"})
+		},
+		backgroundWindow: func(w *mygo.Window) backgroundWindow { return w },
+		quit:             mygo.App.Quit,
+		secrets:          mygoSecrets{},
+		now:              time.Now,
+		async:            func(fn func()) { go fn() },
 		notify: func(title, body string) {
 			if !mygo.NotificationsSupported() {
 				return
@@ -70,7 +84,17 @@ func realDeps() deps {
 			return paths[0], nil
 		},
 		openPath: func(path string) error { return mygo.Shell.OpenPath(path) },
-		reveal:   func(path string) { mygo.Shell.ShowItemInFolder(path) },
+		pickTaskList: func(parent *mygo.Window) (string, error) {
+			paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: parent, Title: "导入 TXT 链接", Filters: []mygo.FileFilter{{Name: "文本文件", Extensions: []string{"txt"}}}})
+			if err != nil || len(paths) == 0 {
+				return "", err
+			}
+			return paths[0], nil
+		},
+		saveTaskList: func(parent *mygo.Window) (string, error) {
+			return mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, Title: "导出脱敏任务清单", DefaultPath: "downloads.json", Filters: []mygo.FileFilter{{Name: "JSON 清单", Extensions: []string{"json"}}}})
+		},
+		reveal: func(path string) { mygo.Shell.ShowItemInFolder(path) },
 		detectSystem: func(ctx context.Context) (*proxy.System, error) {
 			return proxy.Detect(ctx)
 		},

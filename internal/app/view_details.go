@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +13,32 @@ import (
 
 func (a *app) openDetails(id string) {
 	a.detailsID, a.detailsOpen = id, true
+	a.detailsRate, a.detailsRateErr = "0", ""
+	a.detailsSHA, a.detailsSHAErr = "", ""
+	a.detailsConnections, a.detailsConnectionsErr = "1", ""
+	items, _ := a.engine.Snapshot()
+	for _, it := range items {
+		if it.ID == id {
+			a.detailsConnections = numberLabel(max(1, it.ConnectionLimit))
+			a.detailsSHA = it.ExpectedSHA256
+			a.detailsRate = strconv.FormatFloat(float64(it.TaskRateLimit)/1024, 'f', -1, 64)
+			break
+		}
+	}
+}
+
+func (a *app) applyTaskRateLimit() {
+	rate, err := download.ParseTaskRateKiB(a.detailsRate)
+	if err == nil {
+		err = a.engine.SetTaskRateLimit(a.detailsID, rate)
+	}
+	if err != nil {
+		a.detailsRateErr = err.Error()
+		return
+	}
+	a.detailsRateErr = ""
+	a.dirty.Store(true)
+	a.toast("任务限速已更新")
 }
 
 func (a *app) detailsModal(c *ui.Context, items []download.Item) {
@@ -40,9 +67,23 @@ func (a *app) detailsModal(c *ui.Context, items []download.Item) {
 			if !found {
 				ui.Text(c, "此任务已从列表移除。").FontSize(14).TextColor(p.Muted)
 			} else {
+				c.Key("task-details-scroll-" + item.ID)
 				ui.Scroll(c).Height(min(450, max(180, height-230))).Gap(12).Children(func() {
 					ui.Text(c, item.FileName).FontSize(16).Bold().Selectable()
+					ui.Text(c, connectionStatus(item)).FontSize(12).TextColor(p.Muted)
 					progressBar(c, p, item)
+					ui.Field(c, "任务限速（KB/s，0 表示不另设上限）", func() {
+						ui.Row(c).Gap(8).Children(func() {
+							c.Key("details-task-rate-" + item.ID)
+							ui.TextInput(c, &a.detailsRate).Label("任务限速 KB/s").Grow(1).OnSubmit(a.applyTaskRateLimit)
+							ui.Button(c, "应用限速").OnClick(a.applyTaskRateLimit)
+						})
+					})
+					if a.detailsRateErr != "" {
+						ui.Text(c, a.detailsRateErr).FontSize(12).TextColor(p.Danger)
+					}
+					a.verificationControls(c, item)
+					a.taskConnectionControls(c, item)
 					for _, field := range taskDetailFields(item, a.now) {
 						ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
 							ui.Text(c, field.label).Width(100).Shrink(0).FontSize(13).TextColor(p.Muted)
@@ -59,6 +100,7 @@ func (a *app) detailsModal(c *ui.Context, items []download.Item) {
 			}
 			ui.Divider(c).Background(p.Divider)
 			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+				ui.Button(c, "更新下载链接…").Disabled(!found || !sourceEditable(item)).OnClick(func() { a.openSource(item.ID) })
 				ui.Button(c, "复制诊断信息").Disabled(!found).OnClick(func() {
 					services.WriteClipboard(taskDiagnostic(item, a.now))
 					a.toast("已复制诊断信息")
@@ -111,12 +153,21 @@ func taskDetailFields(it download.Item, now time.Time) []detailField {
 		duration = max(time.Duration(0), end.Sub(it.CreatedAt)).Round(time.Second).String()
 	}
 	return []detailField{
+		{"连接模式", connectionStatus(it)}, {"回退说明", it.FallbackReason},
+		{"任务限速", taskRateLabel(it.TaskRateLimit)},
 		{"状态", state}, {"下载来源", download.DiagnosticURL(it.URL)}, {"保存路径", it.Path},
 		{"文件大小", formatBytes(it.Total)}, {"已下载", formatBytes(it.Done)},
 		{"当前速度", speed}, {"预计剩余", eta}, {"自动重试次数", fmt.Sprint(it.RetryCount)},
 		{"断点续传", resume}, {"创建时间", stamp(it.CreatedAt)}, {"结束时间", stamp(it.FinishedAt)},
 		{"时长（含暂停）", duration},
 	}
+}
+
+func taskRateLabel(rate int64) string {
+	if rate == 0 {
+		return "不另设上限（仍遵循全局限速）"
+	}
+	return formatSpeed(float64(rate))
 }
 
 func taskDiagnostic(it download.Item, now time.Time) string {

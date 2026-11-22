@@ -9,11 +9,17 @@ import (
 func TestDefault(t *testing.T) {
 	dir := t.TempDir()
 	s := Default(dir)
+	if s.TaskConnections != 1 || s.MaxConnections != 16 {
+		t.Fatal("connection defaults changed")
+	}
 	if s.Version != 1 || s.Theme != ThemeSystem || s.View != ViewList || s.Sort != SortNewest {
 		t.Errorf("defaults = %+v", s)
 	}
 	if s.MaxConcurrent != 3 || !s.NotifyOnComplete || !s.AutoStart {
 		t.Errorf("defaults = %+v", s)
+	}
+	if s.CloseToTray {
+		t.Fatal("close-to-tray must be opt-in")
 	}
 	if s.Proxy.Mode != proxy.ModeSystem || s.DownloadDir != dir {
 		t.Errorf("defaults = %+v", s)
@@ -48,7 +54,12 @@ func TestNormalize(t *testing.T) {
 		t.Errorf("proxy mode = %q", s.Proxy.Mode)
 	}
 	s.MaxConcurrent = 0
+	s.TaskConnections = 99
+	s.MaxConnections = 99
 	s.Normalize(fallback)
+	if s.TaskConnections != 8 || s.MaxConnections != 64 {
+		t.Fatal("connection caps not normalized")
+	}
 	if s.MaxConcurrent != 1 {
 		t.Errorf("MaxConcurrent = %d", s.MaxConcurrent)
 	}

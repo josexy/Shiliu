@@ -156,6 +156,9 @@ func (a *app) itemMenu(c *ui.Context, m *ui.Menu, it download.Item) {
 	if m.Item("任务详情").Chosen() {
 		a.openDetails(it.ID)
 	}
+	if m.Item("更新下载链接…").Disabled(!sourceEditable(it)).Chosen() {
+		a.openSource(it.ID)
+	}
 	if m.Item("打开").Disabled(!done).Chosen() {
 		a.openItem(it)
 	}

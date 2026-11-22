@@ -132,6 +132,9 @@ func TestRateLimitUIAppliesAndPersists(t *testing.T) {
 	a := newTestApp(t, engine)
 	a.openSettings(0)
 	tt := testerFor(a)
+	// Connection settings make this page scroll; bring the bandwidth row into view.
+	tt.Wheel(600, 400, 0, 280)
+	tt.Advance(500 * time.Millisecond)
 	if r, ok := tt.Find("全局限速 KB/s"); ok {
 		// The number widget also contains two step buttons; type in its text box.
 		tt.ClickAt(r.X+20, r.Y+r.H/2)

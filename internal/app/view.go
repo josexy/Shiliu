@@ -52,6 +52,8 @@ func (a *app) view(c *ui.Context) {
 	a.confirmModal(c)
 	a.advancedModal(c)
 	a.detailsModal(c, items)
+	a.taskListModal(c)
+	a.sourceModal(c)
 }
 
 // shortcuts handles the window's keys.
@@ -62,7 +64,7 @@ func (a *app) shortcuts(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyF) {
 		a.focusSearch = true
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyEnter) && strings.TrimSpace(a.input) != "" && !a.settingsOpen && !a.advanced.open && !a.detailsOpen && !a.confirm.open {
+	if c.Shortcut(ui.Cmd, ui.KeyEnter) && strings.TrimSpace(a.input) != "" && !a.settingsOpen && !a.advanced.open && !a.detailsOpen && !a.confirm.open && !a.taskList.open && !a.source.open {
 		a.addDownloads()
 	}
 }

@@ -41,6 +41,18 @@ func (a *app) advancedModal(c *ui.Context) {
 					c.Key("advanced-name")
 					ui.TextInput(c, &a.advanced.fileName).Label("任务文件名").Placeholder("留空时自动识别文件名")
 				})
+				ui.Field(c, "任务限速（KB/s，0 表示不另设上限）", func() {
+					c.Key("advanced-task-rate")
+					ui.TextInput(c, &a.advanced.rateKiB).Label("高级任务限速 KB/s").Placeholder("0 表示不另设任务上限")
+				})
+				ui.Field(c, "预期 SHA-256（可选）", func() {
+					c.Key("advanced-sha256")
+					ui.TextInput(c, &a.advanced.expectedSHA).Label("高级预期 SHA-256").FontSize(12).Placeholder("留空时不校验；否则填写 64 位十六进制摘要")
+				})
+				ui.Field(c, "任务连接数（1–8）", func() {
+					c.Key("advanced-connections")
+					ui.TextInput(c, &a.advanced.connections).Label("高级任务连接数")
+				})
 				ui.Field(c, "Referer（可选）", func() {
 					c.Key("advanced-referer")
 					ui.TextInput(c, &a.advanced.referer).Label("请求来源 Referer").Placeholder("https://example.com/")

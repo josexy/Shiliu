@@ -38,7 +38,11 @@ const proxyTestURL = "https://example.com/"
 // replace it with a fake.
 type downloader interface {
 	Add(raw string) (added int, skipped int, invalid []string)
+	AddContext(context.Context, string) (added int, skipped int, err error)
 	AddTask(download.AddOptions) (string, error)
+	BeginSourceUpdate(string, download.SourceOptions) (*download.SourceDraft, error)
+	ProbeSource(context.Context, *download.SourceDraft) (download.SourcePreview, error)
+	CommitSource(*download.SourceDraft) error
 	Pause(id string)
 	Resume(id string)
 	Retry(id string)
@@ -49,11 +53,19 @@ type downloader interface {
 	ClearCompleted()
 	SetDir(dir string)
 	SetMaxConcurrent(n int)
+	SetMaxConnections(int) error
+	SetDefaultConnections(int) error
+	SetTaskConnections(string, int) error
 	SetAutoStart(on bool)
 	SetRateLimit(bytesPerSecond int64)
+	SetTaskRateLimit(string, int64) error
+	SetExpectedSHA256(string, string) error
+	Verify(string) error
+	CancelVerification(string)
 	RefreshFiles()
 	Snapshot() ([]download.Item, download.Summary)
 	Records() []download.Record
+	AcknowledgeSources([]download.Record) error
 	Restore([]download.Record)
 	SetOnChange(func())
 	SetOnComplete(func(download.Item))
@@ -72,52 +84,70 @@ type app struct {
 	dark    bool
 
 	// UI values bound to widgets persist here, out of the build pass.
-	themeIdx       int
-	viewIdx        int
-	sortLabel      string
-	maxLabel       string
-	rateKiB        float64
-	settingsTab    int
-	proxyModeIdx   int
-	proxyKindLabel string
-	proxyPort      float64
-	proxyDraft     proxy.Config
-	passwordDirty  bool
-	proxyErr       string
+	themeIdx           int
+	viewIdx            int
+	sortLabel          string
+	maxLabel           string
+	globalConnections  string
+	defaultConnections string
+	connectionsErr     string
+	rateKiB            float64
+	settingsTab        int
+	proxyModeIdx       int
+	proxyKindLabel     string
+	proxyPort          float64
+	proxyDraft         proxy.Config
+	passwordDirty      bool
+	proxyErr           string
 
 	// View state.
-	input            string
-	inputErr         string
-	query            string
-	filter           string
-	visible          []download.Item
-	summary          download.Summary
-	railOn           bool
-	railValue        float64
-	selection        ui.Selection[string]
-	list             ui.ListState
-	grid             ui.GridState
-	focusSearch      bool
-	settingsOpen     bool
-	settingsWasOpen  bool
-	proxyTest        proxyTest
-	system           *proxy.System
-	systemErr        string
-	systemRefreshing bool
-	confirm          confirmState
-	advanced         advancedState
-	advancedWasOpen  bool
-	detailsID        string
-	detailsOpen      bool
-	toasts           []string
-	now              time.Time
-	canNotify        bool
+	input                 string
+	inputErr              string
+	query                 string
+	filter                string
+	visible               []download.Item
+	summary               download.Summary
+	railOn                bool
+	railValue             float64
+	selection             ui.Selection[string]
+	list                  ui.ListState
+	grid                  ui.GridState
+	focusSearch           bool
+	settingsOpen          bool
+	settingsWasOpen       bool
+	proxyTest             proxyTest
+	system                *proxy.System
+	systemErr             string
+	systemRefreshing      bool
+	confirm               confirmState
+	advanced              advancedState
+	advancedWasOpen       bool
+	taskList              taskListState
+	source                sourceState
+	taskListJobs          sync.WaitGroup
+	stopping              bool
+	tray                  trayState
+	lifetime              context.Context
+	cancelLifetime        context.CancelFunc
+	backgroundJobs        sync.WaitGroup
+	detailsID             string
+	detailsOpen           bool
+	detailsRate           string
+	detailsRateErr        string
+	detailsConnections    string
+	detailsConnectionsErr string
+	detailsSHA            string
+	detailsSHAErr         string
+	toasts                []string
+	now                   time.Time
+	canNotify             bool
 
-	client  atomic.Pointer[clientHolder]
-	dirty   atomic.Bool
-	shrunk  sync.Once
-	saverCh chan struct{}
-	saverWG sync.WaitGroup
+	client    atomic.Pointer[clientHolder]
+	dirty     atomic.Bool
+	shrunk    sync.Once
+	saverCh   chan struct{}
+	saverWG   sync.WaitGroup
+	persistMu sync.Mutex
 }
 
 type clientHolder struct {
@@ -143,7 +173,9 @@ type confirmState struct {
 }
 
 func newApp(d deps) *app {
+	lifetime, cancel := context.WithCancel(context.Background())
 	a := &app{
+		lifetime: lifetime, cancelLifetime: cancel,
 		deps:      d,
 		filter:    filterAll,
 		proxyPort: 7890,
@@ -190,9 +222,10 @@ func (a *app) load() {
 		a.toast(err.Error())
 	}
 	a.engine = download.New(download.Options{
-		Dir:           a.s.DownloadDir,
-		AppVersion:    a.deps.version,
-		MaxConcurrent: a.s.MaxConcurrent,
+		Dir:            a.s.DownloadDir,
+		AppVersion:     a.deps.version,
+		MaxConcurrent:  a.s.MaxConcurrent,
+		MaxConnections: a.s.MaxConnections, DefaultConnections: a.s.TaskConnections,
 		AutoStart:     a.s.AutoStart,
 		RateLimit:     a.s.RateLimit,
 		ClientFactory: a.clientSnapshot,
@@ -232,6 +265,12 @@ func (a *app) start() {
 		BackgroundColor:   "light-dark(#F4F6FA, #151B26)",
 		Content:           ui.View(a.view),
 	})
+	if a.deps.backgroundWindow != nil {
+		a.bindBackgroundWindow(a.deps.backgroundWindow(a.win))
+	} else {
+		a.bindBackgroundWindow(a.win)
+	}
+	a.initTray()
 	a.engine.SetOnChange(a.onEngineChange)
 	a.engine.SetOnComplete(a.onEngineComplete)
 	a.startSaver()
@@ -240,6 +279,14 @@ func (a *app) start() {
 // shutdown pauses the downloads and saves everything before the app quits.
 func (a *app) shutdown() {
 	a.shrunk.Do(func() {
+		a.stopping = true
+		if a.cancelLifetime != nil {
+			a.cancelLifetime()
+		}
+		a.closeTaskList()
+		a.closeSource()
+		a.taskListJobs.Wait()
+		a.backgroundJobs.Wait()
 		if a.saverCh != nil {
 			close(a.saverCh)
 			a.saverWG.Wait()
@@ -247,11 +294,12 @@ func (a *app) shutdown() {
 		if a.engine != nil {
 			a.engine.Shutdown()
 		}
+		a.stopTray()
 		if a.store == nil {
 			return
 		}
 		if a.engine != nil {
-			if err := a.store.SaveTasks(a.engine.Records()); err != nil {
+			if err := a.persistTasks(); err != nil {
 				log.Println(err)
 			}
 		}
@@ -269,6 +317,7 @@ func (a *app) shutdown() {
 // changed.
 func (a *app) startSaver() {
 	a.saverCh = make(chan struct{})
+	refreshTray := a.tray.handle != nil
 	a.saverWG.Add(1)
 	go func() {
 		defer a.saverWG.Done()
@@ -279,15 +328,30 @@ func (a *app) startSaver() {
 			case <-a.saverCh:
 				return
 			case <-ticker.C:
+				if refreshTray {
+					a.dispatch(a.refreshTray)
+				}
 				a.engine.RefreshFiles()
 				if a.dirty.Swap(false) {
-					if err := a.store.SaveTasks(a.engine.Records()); err != nil {
+					if err := a.persistTasks(); err != nil {
 						log.Println(err)
 					}
 				}
 			}
 		}
 	}()
+}
+
+// Take the snapshot inside the persistence lock so an earlier saver cannot
+// overwrite a source revision after its journal has been acknowledged.
+func (a *app) persistTasks() error {
+	a.persistMu.Lock()
+	defer a.persistMu.Unlock()
+	records := a.engine.Records()
+	if err := a.store.SaveTasks(records); err != nil {
+		return err
+	}
+	return a.engine.AcknowledgeSources(records)
 }
 
 // dispatch runs fn where the view reads its state.
@@ -311,9 +375,16 @@ func (a *app) onEngineChange() {
 // main thread.
 func (a *app) onEngineComplete(it download.Item) {
 	a.dispatch(func() {
-		a.toast("已下载完成：" + it.FileName)
+		title, body := "下载完成", it.FileName
+		message := "已下载完成：" + it.FileName
+		if it.ExpectedSHA256 != "" {
+			title = "传输完成"
+			body += "（SHA-256 校验结果请查看任务详情）"
+			message = title + "：" + body
+		}
+		a.toast(message)
 		if a.s.NotifyOnComplete && a.canNotify && a.deps.notify != nil && !a.appActive() {
-			a.deps.notify("下载完成", it.FileName)
+			a.deps.notify(title, body)
 		}
 	})
 }
@@ -366,7 +437,7 @@ func (a *app) refreshSystemSync() {
 	if a.deps.detectSystem == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(a.lifetime, 3*time.Second)
 	defer cancel()
 	sys, err := a.deps.detectSystem(ctx)
 	a.system = sys
@@ -379,15 +450,24 @@ func (a *app) refreshSystemSync() {
 
 // refreshSystemAsync reads the system proxy again, for the settings page.
 func (a *app) refreshSystemAsync() {
-	if a.systemRefreshing || a.deps.detectSystem == nil {
+	if a.stopping || a.systemRefreshing || a.deps.detectSystem == nil {
 		return
 	}
 	a.systemRefreshing = true
+	lifetime := a.lifetime
+	a.backgroundJobs.Add(1)
 	a.deps.async(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer a.backgroundJobs.Done()
+		ctx, cancel := context.WithTimeout(lifetime, 4*time.Second)
 		defer cancel()
 		sys, err := a.deps.detectSystem(ctx)
+		if lifetime.Err() != nil {
+			return
+		}
 		a.dispatch(func() {
+			if a.stopping {
+				return
+			}
 			a.systemRefreshing = false
 			a.system = sys
 			if err != nil {
